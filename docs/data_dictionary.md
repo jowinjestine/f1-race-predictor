@@ -1,6 +1,6 @@
 # Data Dictionary
 
-Base fields in `data/raw/all_races.parquet` and per-season `data/raw/season_YYYY.parquet`.
+Base fields in `data/raw/race/all_races.parquet` and per-season `data/raw/race/season_YYYY.parquet`.
 Derived target columns (`is_podium`, `is_points_finish`, `is_dnf`) are only present in `all_races.parquet`.
 
 ## Identifiers
@@ -146,4 +146,4 @@ Base fields in `data/raw/laps/all_laps.parquet` and per-season `data/raw/laps/la
 - Missing weather data (~8%) occurs when circuit coordinates are not mapped or the API is unavailable.
 - Data is partitioned by season: `season_2018.parquet`, ..., `season_2025.parquet`.
 - Combined file: `all_races.parquet` contains all seasons with derived target columns.
-- All data is persisted to `gs://f1-predictor-artifacts-jowin/data/raw/`.
+- All data is persisted to `gs://f1-predictor-artifacts-jowin/data/raw/race/`.

@@ -14,7 +14,6 @@ import fastf1
 import pandas as pd
 
 from f1_predictor.data.collect import (
-    DEFAULT_DATA_DIR,
     FASTF1_SEASONS,
     JOLPICA_ONLY_SEASONS,
     _td_to_seconds,
@@ -30,7 +29,7 @@ from f1_predictor.data.jolpica import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_LAPS_DIR = DEFAULT_DATA_DIR / "laps"
+DEFAULT_LAPS_DIR = Path.home() / ".local" / "share" / "f1-predictor" / "raw" / "laps"
 
 
 def _fastf1_lap_row(
