@@ -488,6 +488,15 @@ notebooks = [
     { name = "seaborn" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "ipykernel" },
+    { name = "jupyter" },
+    { name = "matplotlib" },
+    { name = "nbconvert" },
+    { name = "seaborn" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "fastf1", specifier = ">=3.3" },
@@ -509,6 +518,15 @@ requires-dist = [
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31" },
 ]
 provides-extras = ["dev", "notebooks"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "ipykernel", specifier = ">=7.2.0" },
+    { name = "jupyter", specifier = ">=1.1.1" },
+    { name = "matplotlib", specifier = ">=3.10.8" },
+    { name = "nbconvert", specifier = ">=7.17.1" },
+    { name = "seaborn", specifier = ">=0.13.2" },
+]
 
 [[package]]
 name = "fastf1"
