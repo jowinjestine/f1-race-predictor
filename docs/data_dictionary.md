@@ -8,42 +8,42 @@ Derived target columns (`is_podium`, `is_points_finish`, `is_dnf`) are only pres
 | Column | Type | Description | Source |
 |--------|------|-------------|--------|
 | `season` | int | Calendar year (2018-2025) | FastF1 / Jolpica |
-| `round` | int | Round number within the season | FastF1 |
-| `event_name` | str | Grand Prix name (e.g. "Bahrain Grand Prix") | FastF1 |
-| `location` | str | Circuit location (e.g. "Sakhir") | FastF1 |
-| `country` | str | Country name | FastF1 |
-| `event_date` | str | Race date in YYYY-MM-DD format | FastF1 |
+| `round` | int | Round number within the season | FastF1 / Jolpica |
+| `event_name` | str | Grand Prix name (e.g. "Bahrain Grand Prix") | FastF1 / Jolpica |
+| `location` | str | Circuit location (e.g. "Sakhir") | FastF1 / Jolpica |
+| `country` | str | Country name | FastF1 / Jolpica |
+| `event_date` | str | Race date in YYYY-MM-DD format | FastF1 / Jolpica |
 
 ## Driver & Team
 
 | Column | Type | Description | Source |
 |--------|------|-------------|--------|
-| `driver_number` | str | Car number | FastF1 |
-| `driver_abbrev` | str | Three-letter abbreviation (e.g. "VER") | FastF1 |
-| `driver_id` | str | FastF1 driver identifier | FastF1 |
-| `first_name` | str | Driver's first name | FastF1 |
-| `last_name` | str | Driver's last name | FastF1 |
-| `team` | str | Constructor/team name | FastF1 |
-| `team_id` | str | FastF1 team identifier | FastF1 |
+| `driver_number` | str | Car number | FastF1 / Jolpica |
+| `driver_abbrev` | str | Three-letter abbreviation (e.g. "VER") | FastF1 / Jolpica |
+| `driver_id` | str | Driver identifier | FastF1 / Jolpica |
+| `first_name` | str | Driver's first name | FastF1 / Jolpica |
+| `last_name` | str | Driver's last name | FastF1 / Jolpica |
+| `team` | str | Constructor/team name | FastF1 / Jolpica |
+| `team_id` | str | Team identifier | FastF1 / Jolpica |
 
 ## Race Results
 
 | Column | Type | Description | Source |
 |--------|------|-------------|--------|
-| `finish_position` | int/null | Final classified position (null if not classified) | FastF1 |
-| `grid_position` | int/null | Starting grid position | FastF1 |
-| `status` | str | Finish status ("Finished", "+1 Lap", "Retired", etc.) | FastF1 |
-| `points` | float | Championship points scored | FastF1 |
-| `laps_completed` | int | Number of laps completed | FastF1 |
-| `is_classified` | bool | Whether the driver was officially classified | FastF1 |
+| `finish_position` | int/null | Final classified position (null if not classified) | FastF1 / Jolpica |
+| `grid_position` | int/null | Starting grid position | FastF1 / Jolpica |
+| `status` | str | Finish status ("Finished", "+1 Lap", "Retired", etc.) | FastF1 / Jolpica |
+| `points` | float | Championship points scored | FastF1 / Jolpica |
+| `laps_completed` | int | Number of laps completed | FastF1 / Jolpica |
+| `is_classified` | bool | Whether the driver was officially classified | FastF1 / Jolpica |
 
 ## Qualifying Times
 
 | Column | Type | Description | Source |
 |--------|------|-------------|--------|
-| `q1_time_sec` | float/null | Q1 lap time in seconds (null if not set) | FastF1 |
-| `q2_time_sec` | float/null | Q2 lap time in seconds (null if not set) | FastF1 |
-| `q3_time_sec` | float/null | Q3 lap time in seconds (null if not set) | FastF1 |
+| `q1_time_sec` | float/null | Q1 lap time in seconds (null if not set) | FastF1 / Jolpica |
+| `q2_time_sec` | float/null | Q2 lap time in seconds (null if not set) | FastF1 / Jolpica |
+| `q3_time_sec` | float/null | Q3 lap time in seconds (null if not set) | FastF1 / Jolpica |
 | `race_time_sec` | float/null | Total race time in seconds. FastF1 provides absolute time for all drivers; Jolpica (2025+) provides milliseconds for the race winner only — null for other drivers | FastF1 / Jolpica |
 
 ## FastF1 Weather (race-session aggregates)

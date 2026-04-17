@@ -285,7 +285,7 @@ def backfill_qualifying(df: pd.DataFrame) -> pd.DataFrame:
 
 def collect_all(  # pragma: no cover
     output_dir: Path | None = None,
-    upload_gcs: bool = True,
+    upload_gcs: bool = False,
 ) -> pd.DataFrame:
     """Collect all seasons and save as partitioned Parquet.
 
@@ -380,8 +380,6 @@ if __name__ == "__main__":  # pragma: no cover
     project_data_dir = Path(__file__).resolve().parents[3] / "data" / "raw"
     df = collect_all(output_dir=project_data_dir, upload_gcs=True)
     if len(df) > 0:
-        out_path = project_data_dir / "all_races.parquet"
-        df.to_parquet(out_path, engine="pyarrow", index=False)
         print(f"\nDone! {len(df)} rows, {len(df.columns)} columns")
         print(f"Seasons: {sorted(df['season'].unique())}")
         print(f"Races: {df.groupby('season')['round'].nunique().to_dict()}")
