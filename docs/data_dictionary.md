@@ -78,7 +78,7 @@ Derived target columns (`is_podium`, `is_points_finish`, `is_dnf`) are only pres
 
 - One row per driver per race (typically 20 drivers per race).
 - 2018-2024 collected via FastF1 (race results + weather telemetry); 2025 collected via Jolpica API.
-- Qualifying times (q1/q2/q3) backfilled from Jolpica API (~70% coverage). Gaps are drivers eliminated before Q1 or missing API data.
+- Qualifying times (q1/q2/q3) backfilled from Jolpica API (~70% coverage). Gaps reflect drivers eliminated in Q1, drivers who did not set a qualifying time / DNS, or missing API data.
 - FastF1 weather is aggregated from per-minute telemetry during the race (not available for Jolpica-only seasons).
 - Open-Meteo weather is a daily observation for the race location.
 - Missing weather data (~8%) occurs when circuit coordinates are not mapped or the API is unavailable.

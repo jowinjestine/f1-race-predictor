@@ -98,14 +98,19 @@ def get_openmeteo_weather(lat: float, lon: float, date: str) -> dict[str, float 
     try:
         resp = requests.get(OPENMETEO_URL, params=params, timeout=10)
         resp.raise_for_status()
-        daily = resp.json().get("daily", {})
+        payload = resp.json()
+        if not isinstance(payload, dict):
+            raise TypeError("Open-Meteo response is not a JSON object")
+        daily = payload.get("daily", {})
+        if not isinstance(daily, dict):
+            raise TypeError("Open-Meteo daily payload is not a JSON object")
         return {
             "weather_temp_max": _first(daily.get("temperature_2m_max")),
             "weather_temp_min": _first(daily.get("temperature_2m_min")),
             "weather_precip_mm": _first(daily.get("precipitation_sum")),
             "weather_wind_max_kph": _first(daily.get("windspeed_10m_max")),
         }
-    except (requests.RequestException, ValueError, KeyError, IndexError):
+    except (requests.RequestException, ValueError, KeyError, IndexError, TypeError, AttributeError):
         logger.warning("Failed to fetch weather for %s at (%s, %s)", date, lat, lon, exc_info=True)
         return {
             "weather_temp_max": None,
@@ -205,6 +210,12 @@ def collect_season(year: int) -> pd.DataFrame:  # pragma: no cover
     return df
 
 
+def _safe_float(val: Any) -> float | None:
+    """Convert to float, returning None for NaN."""
+    f = float(val)
+    return None if pd.isna(f) else f
+
+
 def _aggregate_fastf1_weather(session: Any) -> dict[str, float | bool | None]:
     """Aggregate FastF1's per-minute weather data into race-level stats."""
     try:
@@ -212,11 +223,11 @@ def _aggregate_fastf1_weather(session: Any) -> dict[str, float | bool | None]:
         if weather is None or len(weather) == 0:
             return _empty_f1_weather()
         return {
-            "f1_air_temp_mean": float(weather["AirTemp"].mean()),
-            "f1_track_temp_mean": float(weather["TrackTemp"].mean()),
-            "f1_humidity_mean": float(weather["Humidity"].mean()),
-            "f1_pressure_mean": float(weather["Pressure"].mean()),
-            "f1_wind_speed_mean": float(weather["WindSpeed"].mean()),
+            "f1_air_temp_mean": _safe_float(weather["AirTemp"].mean()),
+            "f1_track_temp_mean": _safe_float(weather["TrackTemp"].mean()),
+            "f1_humidity_mean": _safe_float(weather["Humidity"].mean()),
+            "f1_pressure_mean": _safe_float(weather["Pressure"].mean()),
+            "f1_wind_speed_mean": _safe_float(weather["WindSpeed"].mean()),
             "f1_rainfall": bool(weather["Rainfall"].any()),
         }
     except Exception:
@@ -363,15 +374,12 @@ def _upload_to_gcs(data_dir: Path) -> None:  # pragma: no cover
 def add_target_variables(df: pd.DataFrame) -> pd.DataFrame:
     """Add derived target columns."""
     df = df.copy()
-    df["is_podium"] = df["finish_position"].apply(lambda x: x is not None and x <= 3)
-    df["is_points_finish"] = df["finish_position"].apply(lambda x: x is not None and x <= 10)
-    df["is_dnf"] = df["status"].apply(
-        lambda x: (
-            x not in ("Finished", "+1 Lap", "+2 Laps", "+3 Laps", "+4 Laps", "+5 Laps")
-            if x
-            else True
-        )
-    )
+    pos = df["finish_position"]
+    df["is_podium"] = (pos.le(3) & pos.notna()).fillna(False).astype(bool)
+    df["is_points_finish"] = (pos.le(10) & pos.notna()).fillna(False).astype(bool)
+    finished_statuses = ("Finished", "+1 Lap", "+2 Laps", "+3 Laps", "+4 Laps", "+5 Laps")
+    status = df["status"].fillna("")
+    df["is_dnf"] = (~status.isin(finished_statuses)).astype(bool)
     return df
 
 
