@@ -1,4 +1,4 @@
-"""Collect F1 race results and weather data for 2018-2025 seasons."""
+"""Collect F1 race results and weather data for 2018-2024 seasons."""
 
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-SEASONS = range(2018, 2026)
+SEASONS = range(2018, 2025)
 CACHE_DIR = Path.home() / ".fastf1_cache"
-DATA_DIR = Path(__file__).resolve().parents[3] / "data" / "raw"
+DEFAULT_DATA_DIR = Path.home() / ".local" / "share" / "f1-predictor" / "raw"
 
 OPENMETEO_URL = "https://archive-api.open-meteo.com/v1/archive"
 
@@ -90,8 +90,8 @@ def get_openmeteo_weather(lat: float, lon: float, date: str) -> dict[str, float 
             "weather_precip_mm": _first(daily.get("precipitation_sum")),
             "weather_wind_max_kph": _first(daily.get("windspeed_10m_max")),
         }
-    except (requests.RequestException, KeyError, IndexError):
-        logger.warning("Failed to fetch weather for %s at (%s, %s)", date, lat, lon)
+    except (requests.RequestException, ValueError, KeyError, IndexError):
+        logger.warning("Failed to fetch weather for %s at (%s, %s)", date, lat, lon, exc_info=True)
         return {
             "weather_temp_max": None,
             "weather_temp_min": None,
@@ -190,7 +190,7 @@ def collect_season(year: int) -> pd.DataFrame:
     return df
 
 
-def _aggregate_fastf1_weather(session: Any) -> dict[str, float | None]:
+def _aggregate_fastf1_weather(session: Any) -> dict[str, float | bool | None]:
     """Aggregate FastF1's per-minute weather data into race-level stats."""
     try:
         weather = session.weather_data
@@ -208,7 +208,7 @@ def _aggregate_fastf1_weather(session: Any) -> dict[str, float | None]:
         return _empty_f1_weather()
 
 
-def _empty_f1_weather() -> dict[str, float | None]:
+def _empty_f1_weather() -> dict[str, float | bool | None]:
     return {
         "f1_air_temp_mean": None,
         "f1_track_temp_mean": None,
@@ -232,7 +232,7 @@ def _td_to_seconds(val: Any) -> float | None:
 def collect_all(output_dir: Path | None = None) -> pd.DataFrame:
     """Collect all seasons and save as partitioned Parquet."""
     ensure_cache()
-    out = output_dir or DATA_DIR
+    out = output_dir or DEFAULT_DATA_DIR
     out.mkdir(parents=True, exist_ok=True)
 
     all_seasons: list[pd.DataFrame] = []
@@ -276,10 +276,11 @@ def add_target_variables(df: pd.DataFrame) -> pd.DataFrame:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    df = collect_all()
+    project_data_dir = Path(__file__).resolve().parents[3] / "data" / "raw"
+    df = collect_all(output_dir=project_data_dir)
     if len(df) > 0:
         df = add_target_variables(df)
-        out_path = DATA_DIR / "all_races.parquet"
+        out_path = project_data_dir / "all_races.parquet"
         df.to_parquet(out_path, engine="pyarrow", index=False)
         print(f"\nDone! {len(df)} rows, {len(df.columns)} columns")
         print(f"Seasons: {sorted(df['season'].unique())}")

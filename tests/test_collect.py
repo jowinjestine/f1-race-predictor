@@ -9,6 +9,7 @@ import pytest
 import requests as req_lib
 
 from f1_predictor.data.collect import (
+    _aggregate_fastf1_weather,
     _first,
     _td_to_seconds,
     add_target_variables,
@@ -75,6 +76,57 @@ class TestAddTargetVariables:
         assert list(sample_df.columns) == original_cols
 
 
+class TestAggregateFastf1Weather:
+    def test_aggregates_weather_data(self) -> None:
+        weather_df = pd.DataFrame(
+            {
+                "AirTemp": [25.0, 27.0, 26.0],
+                "TrackTemp": [40.0, 42.0, 41.0],
+                "Humidity": [50.0, 55.0, 52.5],
+                "Pressure": [1013.0, 1013.5, 1013.25],
+                "WindSpeed": [3.0, 5.0, 4.0],
+                "Rainfall": [False, False, False],
+            }
+        )
+        session = MagicMock()
+        session.weather_data = weather_df
+        result = _aggregate_fastf1_weather(session)
+        assert result["f1_air_temp_mean"] == pytest.approx(26.0)
+        assert result["f1_track_temp_mean"] == pytest.approx(41.0)
+        assert result["f1_humidity_mean"] == pytest.approx(52.5)
+        assert result["f1_wind_speed_mean"] == pytest.approx(4.0)
+        assert result["f1_rainfall"] is False
+
+    def test_detects_rainfall(self) -> None:
+        weather_df = pd.DataFrame(
+            {
+                "AirTemp": [20.0],
+                "TrackTemp": [30.0],
+                "Humidity": [80.0],
+                "Pressure": [1010.0],
+                "WindSpeed": [6.0],
+                "Rainfall": [True],
+            }
+        )
+        session = MagicMock()
+        session.weather_data = weather_df
+        result = _aggregate_fastf1_weather(session)
+        assert result["f1_rainfall"] is True
+
+    def test_returns_nones_for_empty_weather(self) -> None:
+        session = MagicMock()
+        session.weather_data = None
+        result = _aggregate_fastf1_weather(session)
+        assert result["f1_air_temp_mean"] is None
+        assert result["f1_rainfall"] is None
+
+    def test_returns_nones_on_exception(self) -> None:
+        session = MagicMock()
+        session.weather_data = MagicMock(side_effect=Exception("bad data"))
+        result = _aggregate_fastf1_weather(session)
+        assert result["f1_air_temp_mean"] is None
+
+
 class TestGetOpenmeteoWeather:
     @patch("f1_predictor.data.collect.requests.get")
     def test_returns_weather_data(self, mock_get: MagicMock) -> None:
@@ -95,6 +147,14 @@ class TestGetOpenmeteoWeather:
     @patch("f1_predictor.data.collect.requests.get")
     def test_returns_nones_on_failure(self, mock_get: MagicMock) -> None:
         mock_get.side_effect = req_lib.ConnectionError("Network error")
+        result = get_openmeteo_weather(26.0, 50.5, "2024-03-02")
+        assert result["weather_temp_max"] is None
+        assert result["weather_precip_mm"] is None
+
+    @patch("f1_predictor.data.collect.requests.get")
+    def test_returns_nones_on_json_decode_error(self, mock_get: MagicMock) -> None:
+        mock_get.return_value.raise_for_status = MagicMock()
+        mock_get.return_value.json.side_effect = ValueError("Invalid JSON")
         result = get_openmeteo_weather(26.0, 50.5, "2024-03-02")
         assert result["weather_temp_max"] is None
         assert result["weather_precip_mm"] is None
