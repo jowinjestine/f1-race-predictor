@@ -1,4 +1,10 @@
-"""Collect F1 race results and weather data for 2018-2024 seasons."""
+"""Collect F1 race results and weather data for 2018-2025 seasons.
+
+Uses FastF1 for 2018-2024 (race results + weather telemetry) and the
+Jolpica API for qualifying times and the 2025 season.  Finished data
+is persisted to Google Cloud Storage so notebooks can read from GCS
+instead of re-fetching from upstream APIs.
+"""
 
 from __future__ import annotations
 
@@ -10,9 +16,18 @@ import fastf1
 import pandas as pd
 import requests
 
+from f1_predictor.data.jolpica import (
+    _parse_lap_time as _jolpica_parse_lap_time,
+)
+from f1_predictor.data.jolpica import (
+    collect_season_jolpica,
+    get_qualifying_results,
+)
+
 logger = logging.getLogger(__name__)
 
-SEASONS = range(2018, 2025)
+FASTF1_SEASONS = range(2018, 2025)
+JOLPICA_ONLY_SEASONS = range(2025, 2026)
 CACHE_DIR = Path.home() / ".fastf1_cache"
 DEFAULT_DATA_DIR = Path.home() / ".local" / "share" / "f1-predictor" / "raw"
 
@@ -229,15 +244,60 @@ def _td_to_seconds(val: Any) -> float | None:
     return None
 
 
-def collect_all(output_dir: Path | None = None) -> pd.DataFrame:
-    """Collect all seasons and save as partitioned Parquet."""
+def backfill_qualifying(df: pd.DataFrame) -> pd.DataFrame:
+    """Fill in null qualifying times from the Jolpica API."""
+    if df.empty:
+        return df
+
+    has_nulls = df["q1_time_sec"].isna().all()
+    if not has_nulls:
+        return df
+
+    df = df.copy()
+    season = int(df["season"].iloc[0])
+    rounds = sorted(df["round"].unique())
+    logger.info("Backfilling qualifying for season %d (%d rounds)", season, len(rounds))
+
+    for round_num in rounds:
+        quali_results = get_qualifying_results(season, int(round_num))
+        quali_map: dict[str, dict[str, float | None]] = {}
+        for qr in quali_results:
+            code = qr.get("Driver", {}).get("code", "")
+            quali_map[code] = {
+                "q1_time_sec": _jolpica_parse_lap_time(qr.get("Q1")),
+                "q2_time_sec": _jolpica_parse_lap_time(qr.get("Q2")),
+                "q3_time_sec": _jolpica_parse_lap_time(qr.get("Q3")),
+            }
+
+        mask = df["round"] == round_num
+        for idx in df.index[mask]:
+            code = str(df.at[idx, "driver_abbrev"])
+            if code in quali_map:
+                for col in ("q1_time_sec", "q2_time_sec", "q3_time_sec"):
+                    if pd.isna(df.at[idx, col]) and quali_map[code].get(col) is not None:
+                        df.at[idx, col] = quali_map[code][col]
+
+    filled = df["q1_time_sec"].notna().sum()
+    logger.info("Backfilled %d qualifying entries for season %d", filled, season)
+    return df
+
+
+def collect_all(
+    output_dir: Path | None = None,
+    upload_gcs: bool = True,
+) -> pd.DataFrame:
+    """Collect all seasons and save as partitioned Parquet.
+
+    Fetches 2018-2024 from FastF1 (with Jolpica qualifying backfill)
+    and 2025 from Jolpica directly.  Optionally uploads to GCS.
+    """
     ensure_cache()
     out = output_dir or DEFAULT_DATA_DIR
     out.mkdir(parents=True, exist_ok=True)
 
     all_seasons: list[pd.DataFrame] = []
 
-    for year in SEASONS:
+    for year in FASTF1_SEASONS:
         parquet_path = out / f"season_{year}.parquet"
         if parquet_path.exists():
             logger.info("Season %d already collected, loading from cache", year)
@@ -246,6 +306,30 @@ def collect_all(output_dir: Path | None = None) -> pd.DataFrame:
 
         df = collect_season(year)
         if len(df) > 0:
+            df = backfill_qualifying(df)
+            df.to_parquet(parquet_path, engine="pyarrow", index=False)
+            logger.info("Saved %s", parquet_path)
+            all_seasons.append(df)
+
+    for year in JOLPICA_ONLY_SEASONS:
+        parquet_path = out / f"season_{year}.parquet"
+        if parquet_path.exists():
+            logger.info("Season %d already collected, loading from cache", year)
+            all_seasons.append(pd.read_parquet(parquet_path))
+            continue
+
+        df = collect_season_jolpica(year)
+        if len(df) > 0:
+            coords_map = CIRCUIT_COORDS
+            for location in df["location"].unique():
+                coords = coords_map.get(location)
+                if coords:
+                    mask = df["location"] == location
+                    date_str = df.loc[mask, "event_date"].iloc[0]
+                    weather = get_openmeteo_weather(coords[0], coords[1], date_str)
+                    for col, val in weather.items():
+                        df.loc[mask, col] = val
+
             df.to_parquet(parquet_path, engine="pyarrow", index=False)
             logger.info("Saved %s", parquet_path)
             all_seasons.append(df)
@@ -254,9 +338,24 @@ def collect_all(output_dir: Path | None = None) -> pd.DataFrame:
         combined = pd.concat(all_seasons, ignore_index=True)
         combined.to_parquet(out / "all_races.parquet", engine="pyarrow", index=False)
         logger.info("Combined dataset: %d rows, %d columns", len(combined), len(combined.columns))
+
+        if upload_gcs:
+            _upload_to_gcs(out)
+
         return combined
 
     return pd.DataFrame()
+
+
+def _upload_to_gcs(data_dir: Path) -> None:
+    """Upload all parquet files to GCS."""
+    try:
+        from f1_predictor.data.storage import upload_season_files
+
+        uris = upload_season_files(data_dir)
+        logger.info("Uploaded %d files to GCS", len(uris))
+    except Exception:
+        logger.warning("Failed to upload to GCS", exc_info=True)
 
 
 def add_target_variables(df: pd.DataFrame) -> pd.DataFrame:
@@ -277,7 +376,7 @@ def add_target_variables(df: pd.DataFrame) -> pd.DataFrame:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     project_data_dir = Path(__file__).resolve().parents[3] / "data" / "raw"
-    df = collect_all(output_dir=project_data_dir)
+    df = collect_all(output_dir=project_data_dir, upload_gcs=True)
     if len(df) > 0:
         df = add_target_variables(df)
         out_path = project_data_dir / "all_races.parquet"
