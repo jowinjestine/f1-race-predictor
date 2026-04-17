@@ -1,12 +1,13 @@
 # Data Dictionary
 
-All fields in `data/raw/all_races.parquet` and per-season `data/raw/season_YYYY.parquet`.
+Base fields in `data/raw/all_races.parquet` and per-season `data/raw/season_YYYY.parquet`.
+Derived target columns (`is_podium`, `is_points_finish`, `is_dnf`) are only present in `all_races.parquet`.
 
 ## Identifiers
 
 | Column | Type | Description | Source |
 |--------|------|-------------|--------|
-| `season` | int | Calendar year (2018-2024) | FastF1 |
+| `season` | int | Calendar year (2018-2025) | FastF1 / Jolpica |
 | `round` | int | Round number within the season | FastF1 |
 | `event_name` | str | Grand Prix name (e.g. "Bahrain Grand Prix") | FastF1 |
 | `location` | str | Circuit location (e.g. "Sakhir") | FastF1 |
@@ -76,10 +77,11 @@ All fields in `data/raw/all_races.parquet` and per-season `data/raw/season_YYYY.
 ## Notes
 
 - One row per driver per race (typically 20 drivers per race).
-- Qualifying times (q1/q2/q3) are currently 100% null — FastF1's race session results do not include separate qualifying session times. A future enhancement could load the qualifying session separately.
-- FastF1 weather is aggregated from per-minute telemetry during the race.
+- 2018-2024 collected via FastF1 (race results + weather telemetry); 2025 collected via Jolpica API.
+- Qualifying times (q1/q2/q3) backfilled from Jolpica API (~70% coverage). Gaps are drivers eliminated before Q1 or missing API data.
+- FastF1 weather is aggregated from per-minute telemetry during the race (not available for Jolpica-only seasons).
 - Open-Meteo weather is a daily observation for the race location.
 - Missing weather data (~8%) occurs when circuit coordinates are not mapped or the API is unavailable.
-- 2025 season data is not yet available (races not completed or data not published).
-- Data is partitioned by season: `season_2018.parquet`, ..., `season_2024.parquet`.
-- Combined file: `all_races.parquet` contains all seasons (2,979 rows across 149 races).
+- Data is partitioned by season: `season_2018.parquet`, ..., `season_2025.parquet`.
+- Combined file: `all_races.parquet` contains all seasons with derived target columns.
+- All data is persisted to `gs://f1-predictor-artifacts-jowin/data/raw/`.

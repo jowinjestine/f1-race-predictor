@@ -13,6 +13,7 @@ from f1_predictor.data.collect import (
     _first,
     _td_to_seconds,
     add_target_variables,
+    backfill_qualifying,
     get_openmeteo_weather,
 )
 
@@ -122,7 +123,10 @@ class TestAggregateFastf1Weather:
 
     def test_returns_nones_on_exception(self) -> None:
         session = MagicMock()
-        session.weather_data = MagicMock(side_effect=Exception("bad data"))
+        weather_mock = MagicMock()
+        weather_mock.__len__ = MagicMock(return_value=1)
+        weather_mock.__getitem__ = MagicMock(side_effect=KeyError("AirTemp"))
+        session.weather_data = weather_mock
         result = _aggregate_fastf1_weather(session)
         assert result["f1_air_temp_mean"] is None
 
@@ -158,3 +162,45 @@ class TestGetOpenmeteoWeather:
         result = get_openmeteo_weather(26.0, 50.5, "2024-03-02")
         assert result["weather_temp_max"] is None
         assert result["weather_precip_mm"] is None
+
+
+class TestBackfillQualifying:
+    @patch("f1_predictor.data.collect.get_qualifying_results")
+    def test_backfills_null_qualifying(self, mock_quali: MagicMock) -> None:
+        df = pd.DataFrame(
+            {
+                "season": [2024, 2024],
+                "round": [1, 1],
+                "driver_abbrev": ["VER", "NOR"],
+                "q1_time_sec": [None, None],
+                "q2_time_sec": [None, None],
+                "q3_time_sec": [None, None],
+            }
+        )
+        mock_quali.return_value = [
+            {"Driver": {"code": "VER"}, "Q1": "1:30.000", "Q2": "1:29.000", "Q3": "1:28.500"},
+            {"Driver": {"code": "NOR"}, "Q1": "1:30.100", "Q2": "1:29.200", "Q3": None},
+        ]
+        result = backfill_qualifying(df)
+        assert result.at[0, "q1_time_sec"] == pytest.approx(90.0)
+        assert result.at[0, "q3_time_sec"] == pytest.approx(88.5)
+        assert result.at[1, "q1_time_sec"] == pytest.approx(90.1)
+        assert pd.isna(result.at[1, "q3_time_sec"])
+
+    def test_skips_when_not_all_null(self) -> None:
+        df = pd.DataFrame(
+            {
+                "season": [2024],
+                "round": [1],
+                "driver_abbrev": ["VER"],
+                "q1_time_sec": [90.0],
+                "q2_time_sec": [None],
+                "q3_time_sec": [None],
+            }
+        )
+        result = backfill_qualifying(df)
+        assert result.at[0, "q1_time_sec"] == 90.0
+
+    def test_returns_empty_for_empty_df(self) -> None:
+        result = backfill_qualifying(pd.DataFrame())
+        assert len(result) == 0

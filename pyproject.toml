@@ -80,4 +80,4 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=f1_predictor --cov-report=term-missing --cov-fail-under=35"
+addopts = "--cov=f1_predictor --cov-report=term-missing --cov-fail-under=70"

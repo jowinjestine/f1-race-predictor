@@ -16,7 +16,7 @@ REQUEST_DELAY = 0.5  # stay under 4 req/s burst limit
 MAX_RETRIES = 3
 
 
-def _get_json(url: str) -> dict[str, Any] | None:
+def _get_json(url: str) -> dict[str, Any] | None:  # pragma: no cover
     for attempt in range(MAX_RETRIES):
         try:
             resp = requests.get(url, timeout=15)
@@ -88,7 +88,7 @@ def _parse_race_time_millis(millis_str: str | None) -> float | None:
         return None
 
 
-def collect_season_jolpica(year: int) -> pd.DataFrame:
+def collect_season_jolpica(year: int) -> pd.DataFrame:  # pragma: no cover
     """Collect all race results + qualifying for a season from Jolpica."""
     logger.info("Collecting season %d from Jolpica", year)
     schedule = get_season_schedule(year)

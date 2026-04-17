@@ -80,7 +80,7 @@ CIRCUIT_COORDS: dict[str, tuple[float, float]] = {
 }
 
 
-def ensure_cache() -> None:
+def ensure_cache() -> None:  # pragma: no cover
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     fastf1.Cache.enable_cache(str(CACHE_DIR))
 
@@ -121,7 +121,7 @@ def _first(lst: list[Any] | None) -> float | None:
     return None
 
 
-def collect_season(year: int) -> pd.DataFrame:
+def collect_season(year: int) -> pd.DataFrame:  # pragma: no cover
     """Collect all race results and weather for a single season."""
     logger.info("Collecting season %d", year)
     schedule = fastf1.get_event_schedule(year)
@@ -142,7 +142,7 @@ def collect_season(year: int) -> pd.DataFrame:
             session = fastf1.get_session(year, round_num, "R")
             session.load(telemetry=False, weather=True, messages=False)
         except Exception:
-            logger.warning("  Failed to load round %d, skipping", round_num)
+            logger.warning("  Failed to load round %d, skipping", round_num, exc_info=True)
             continue
 
         results = session.results
@@ -220,6 +220,7 @@ def _aggregate_fastf1_weather(session: Any) -> dict[str, float | bool | None]:
             "f1_rainfall": bool(weather["Rainfall"].any()),
         }
     except Exception:
+        logger.debug("Failed to aggregate FastF1 weather", exc_info=True)
         return _empty_f1_weather()
 
 
@@ -282,7 +283,7 @@ def backfill_qualifying(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def collect_all(
+def collect_all(  # pragma: no cover
     output_dir: Path | None = None,
     upload_gcs: bool = True,
 ) -> pd.DataFrame:
@@ -336,6 +337,7 @@ def collect_all(
 
     if all_seasons:
         combined = pd.concat(all_seasons, ignore_index=True)
+        combined = add_target_variables(combined)
         combined.to_parquet(out / "all_races.parquet", engine="pyarrow", index=False)
         logger.info("Combined dataset: %d rows, %d columns", len(combined), len(combined.columns))
 
@@ -347,7 +349,7 @@ def collect_all(
     return pd.DataFrame()
 
 
-def _upload_to_gcs(data_dir: Path) -> None:
+def _upload_to_gcs(data_dir: Path) -> None:  # pragma: no cover
     """Upload all parquet files to GCS."""
     try:
         from f1_predictor.data.storage import upload_season_files
@@ -373,12 +375,11 @@ def add_target_variables(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     project_data_dir = Path(__file__).resolve().parents[3] / "data" / "raw"
     df = collect_all(output_dir=project_data_dir, upload_gcs=True)
     if len(df) > 0:
-        df = add_target_variables(df)
         out_path = project_data_dir / "all_races.parquet"
         df.to_parquet(out_path, engine="pyarrow", index=False)
         print(f"\nDone! {len(df)} rows, {len(df.columns)} columns")

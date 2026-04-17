@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from f1_predictor.data.jolpica import (
     _parse_lap_time,
     _parse_race_time_millis,
+    get_qualifying_results,
     get_race_results,
     get_season_schedule,
 )
@@ -90,3 +91,44 @@ class TestGetRaceResults:
     def test_returns_empty_for_no_races(self, mock_get: MagicMock) -> None:
         mock_get.return_value = {"MRData": {"RaceTable": {"Races": []}}}
         assert get_race_results(2025, 99) == []
+
+    @patch("f1_predictor.data.jolpica._get_json")
+    def test_returns_empty_on_failure(self, mock_get: MagicMock) -> None:
+        mock_get.return_value = None
+        assert get_race_results(2025, 1) == []
+
+
+class TestGetQualifyingResults:
+    @patch("f1_predictor.data.jolpica._get_json")
+    def test_returns_qualifying(self, mock_get: MagicMock) -> None:
+        mock_get.return_value = {
+            "MRData": {
+                "RaceTable": {
+                    "Races": [
+                        {
+                            "QualifyingResults": [
+                                {"position": "1", "Driver": {"code": "NOR"}, "Q1": "1:22.000"},
+                            ]
+                        }
+                    ]
+                }
+            }
+        }
+        results = get_qualifying_results(2025, 1)
+        assert len(results) == 1
+        assert results[0]["Q1"] == "1:22.000"
+
+    @patch("f1_predictor.data.jolpica._get_json")
+    def test_returns_empty_on_failure(self, mock_get: MagicMock) -> None:
+        mock_get.return_value = None
+        assert get_qualifying_results(2025, 1) == []
+
+    @patch("f1_predictor.data.jolpica._get_json")
+    def test_returns_empty_for_no_races(self, mock_get: MagicMock) -> None:
+        mock_get.return_value = {"MRData": {"RaceTable": {"Races": []}}}
+        assert get_qualifying_results(2025, 1) == []
+
+
+class TestParseRaceTimeMillisEdge:
+    def test_returns_none_for_invalid(self) -> None:
+        assert _parse_race_time_millis("not_a_number") is None

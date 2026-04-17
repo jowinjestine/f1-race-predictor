@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 import pandas as pd
 
-from f1_predictor.data.storage import ensure_latest
+from f1_predictor.data.storage import ensure_latest, sync_to_local
 
 
 class TestEnsureLatest:
@@ -50,3 +50,36 @@ class TestEnsureLatest:
     ) -> None:
         result = ensure_latest(tmp_path)
         assert len(result) == 0
+
+
+class TestSyncToLocal:
+    @patch("f1_predictor.data.storage.download_parquet")
+    @patch("f1_predictor.data.storage.list_remote_seasons")
+    def test_downloads_missing_files(
+        self, mock_list: MagicMock, mock_download: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_list.return_value = ["data/raw/season_2024.parquet", "data/raw/season_2025.parquet"]
+        result = sync_to_local(tmp_path)
+        assert len(result) == 2
+        assert mock_download.call_count == 2
+
+    @patch("f1_predictor.data.storage.download_parquet")
+    @patch("f1_predictor.data.storage.list_remote_seasons")
+    def test_skips_existing_files(
+        self, mock_list: MagicMock, mock_download: MagicMock, tmp_path: Path
+    ) -> None:
+        (tmp_path / "season_2024.parquet").write_bytes(b"existing")
+        mock_list.return_value = ["data/raw/season_2024.parquet", "data/raw/season_2025.parquet"]
+        result = sync_to_local(tmp_path)
+        assert len(result) == 1
+        mock_download.assert_called_once()
+
+    @patch("f1_predictor.data.storage.download_parquet")
+    @patch("f1_predictor.data.storage.list_remote_seasons")
+    def test_returns_empty_when_no_remote(
+        self, mock_list: MagicMock, mock_download: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_list.return_value = []
+        result = sync_to_local(tmp_path)
+        assert len(result) == 0
+        mock_download.assert_not_called()

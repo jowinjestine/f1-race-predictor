@@ -18,11 +18,11 @@ GCS_PREFIX = "data/raw"
 GCP_PROJECT = "jowin-personal-2026"
 
 
-def get_client() -> storage.Client:
+def get_client() -> storage.Client:  # pragma: no cover
     return storage.Client(project=GCP_PROJECT)
 
 
-def upload_parquet(local_path: Path, blob_name: str | None = None) -> str:
+def upload_parquet(local_path: Path, blob_name: str | None = None) -> str:  # pragma: no cover
     """Upload a local parquet file to GCS. Returns the gs:// URI."""
     client = get_client()
     bucket = client.bucket(BUCKET_NAME)
@@ -34,7 +34,7 @@ def upload_parquet(local_path: Path, blob_name: str | None = None) -> str:
     return uri
 
 
-def download_parquet(blob_name: str, local_path: Path) -> Path:
+def download_parquet(blob_name: str, local_path: Path) -> Path:  # pragma: no cover
     """Download a parquet file from GCS to a local path."""
     client = get_client()
     bucket = client.bucket(BUCKET_NAME)
@@ -45,14 +45,14 @@ def download_parquet(blob_name: str, local_path: Path) -> Path:
     return local_path
 
 
-def read_parquet_from_gcs(blob_name: str) -> pd.DataFrame:
+def read_parquet_from_gcs(blob_name: str) -> pd.DataFrame:  # pragma: no cover
     """Read a parquet file directly from GCS into a DataFrame."""
     uri = f"gs://{BUCKET_NAME}/{blob_name}"
     logger.info("Reading %s", uri)
     return pd.read_parquet(uri)
 
 
-def upload_season_files(data_dir: Path) -> list[str]:
+def upload_season_files(data_dir: Path) -> list[str]:  # pragma: no cover
     """Upload all season parquet files and the combined file to GCS."""
     uploaded: list[str] = []
     for path in sorted(data_dir.glob("*.parquet")):
@@ -61,7 +61,7 @@ def upload_season_files(data_dir: Path) -> list[str]:
     return uploaded
 
 
-def list_remote_seasons() -> list[str]:
+def list_remote_seasons() -> list[str]:  # pragma: no cover
     """List all parquet blobs under the data/raw prefix."""
     client = get_client()
     bucket = client.bucket(BUCKET_NAME)
