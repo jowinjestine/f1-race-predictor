@@ -29,7 +29,13 @@ def _get_json(url: str) -> dict[str, Any] | None:  # pragma: no cover
             time.sleep(REQUEST_DELAY)
             return resp.json()  # type: ignore[no-any-return]
         except (requests.RequestException, ValueError):
-            logger.warning("Jolpica request failed: %s", url, exc_info=True)
+            logger.warning(
+                "Jolpica request failed (attempt %d): %s", attempt + 1, url, exc_info=True
+            )
+            if attempt < MAX_RETRIES - 1:
+                wait = 2 ** (attempt + 1)
+                time.sleep(wait)
+                continue
             return None
     logger.warning("Exhausted retries for %s", url)
     return None

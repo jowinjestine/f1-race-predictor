@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -13,9 +14,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-BUCKET_NAME = "f1-predictor-artifacts-jowin"
-GCS_PREFIX = "data/raw"
-GCP_PROJECT = "jowin-personal-2026"
+BUCKET_NAME = os.environ.get("F1_GCS_BUCKET", "f1-predictor-artifacts-jowin")
+GCS_PREFIX = os.environ.get("F1_GCS_PREFIX", "data/raw")
+GCP_PROJECT = os.environ.get("F1_GCP_PROJECT", "jowin-personal-2026")
 
 
 def get_client() -> storage.Client:  # pragma: no cover

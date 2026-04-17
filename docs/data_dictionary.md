@@ -44,7 +44,7 @@ Derived target columns (`is_podium`, `is_points_finish`, `is_dnf`) are only pres
 | `q1_time_sec` | float/null | Q1 lap time in seconds (null if not set) | FastF1 |
 | `q2_time_sec` | float/null | Q2 lap time in seconds (null if not set) | FastF1 |
 | `q3_time_sec` | float/null | Q3 lap time in seconds (null if not set) | FastF1 |
-| `race_time_sec` | float/null | Total race time in seconds (winner) or gap to winner | FastF1 |
+| `race_time_sec` | float/null | Total race time in seconds. FastF1 provides absolute time for all drivers; Jolpica (2025+) provides milliseconds for the race winner only — null for other drivers | FastF1 / Jolpica |
 
 ## FastF1 Weather (race-session aggregates)
 
