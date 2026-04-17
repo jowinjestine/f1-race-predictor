@@ -71,7 +71,7 @@ def get_qualifying_results(year: int, round_num: int) -> list[dict[str, Any]]:
     return races[0].get("QualifyingResults", [])  # type: ignore[no-any-return]
 
 
-def _parse_lap_time(time_str: str | None) -> float | None:
+def parse_lap_time(time_str: str | None) -> float | None:
     """Convert 'm:ss.sss' lap time string to seconds."""
     if not time_str:
         return None
@@ -125,9 +125,9 @@ def collect_season_jolpica(year: int) -> pd.DataFrame:  # pragma: no cover
         for qr in quali_results:
             driver_code = qr.get("Driver", {}).get("code", "")
             quali_by_driver[driver_code] = {
-                "q1_time_sec": _parse_lap_time(qr.get("Q1")),
-                "q2_time_sec": _parse_lap_time(qr.get("Q2")),
-                "q3_time_sec": _parse_lap_time(qr.get("Q3")),
+                "q1_time_sec": parse_lap_time(qr.get("Q1")),
+                "q2_time_sec": parse_lap_time(qr.get("Q2")),
+                "q3_time_sec": parse_lap_time(qr.get("Q3")),
             }
 
         for result in results:

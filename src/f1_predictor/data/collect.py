@@ -17,11 +17,9 @@ import pandas as pd
 import requests
 
 from f1_predictor.data.jolpica import (
-    _parse_lap_time as _jolpica_parse_lap_time,
-)
-from f1_predictor.data.jolpica import (
     collect_season_jolpica,
     get_qualifying_results,
+    parse_lap_time,
 )
 
 logger = logging.getLogger(__name__)
@@ -261,7 +259,7 @@ def backfill_qualifying(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
 
-    has_nulls = df["q1_time_sec"].isna().all()
+    has_nulls = df[["q1_time_sec", "q2_time_sec", "q3_time_sec"]].isna().any().any()
     if not has_nulls:
         return df
 
@@ -276,9 +274,9 @@ def backfill_qualifying(df: pd.DataFrame) -> pd.DataFrame:
         for qr in quali_results:
             code = qr.get("Driver", {}).get("code", "")
             quali_map[code] = {
-                "q1_time_sec": _jolpica_parse_lap_time(qr.get("Q1")),
-                "q2_time_sec": _jolpica_parse_lap_time(qr.get("Q2")),
-                "q3_time_sec": _jolpica_parse_lap_time(qr.get("Q3")),
+                "q1_time_sec": parse_lap_time(qr.get("Q1")),
+                "q2_time_sec": parse_lap_time(qr.get("Q2")),
+                "q3_time_sec": parse_lap_time(qr.get("Q3")),
             }
 
         mask = df["round"] == round_num

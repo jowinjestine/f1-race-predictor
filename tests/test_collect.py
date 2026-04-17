@@ -187,19 +187,20 @@ class TestBackfillQualifying:
         assert result.at[1, "q1_time_sec"] == pytest.approx(90.1)
         assert pd.isna(result.at[1, "q3_time_sec"])
 
-    def test_skips_when_not_all_null(self) -> None:
+    def test_skips_when_no_nulls(self) -> None:
         df = pd.DataFrame(
             {
                 "season": [2024],
                 "round": [1],
                 "driver_abbrev": ["VER"],
                 "q1_time_sec": [90.0],
-                "q2_time_sec": [None],
-                "q3_time_sec": [None],
+                "q2_time_sec": [89.0],
+                "q3_time_sec": [88.5],
             }
         )
         result = backfill_qualifying(df)
         assert result.at[0, "q1_time_sec"] == 90.0
+        assert result.at[0, "q3_time_sec"] == 88.5
 
     def test_returns_empty_for_empty_df(self) -> None:
         result = backfill_qualifying(pd.DataFrame())

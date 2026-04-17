@@ -5,32 +5,32 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from f1_predictor.data.jolpica import (
-    _parse_lap_time,
     _parse_race_time_millis,
     get_qualifying_results,
     get_race_results,
     get_season_schedule,
+    parse_lap_time,
 )
 
 
 class TestParseLapTime:
     def test_parses_minutes_seconds(self) -> None:
-        assert _parse_lap_time("1:22.167") is not None
-        result = _parse_lap_time("1:22.167")
+        assert parse_lap_time("1:22.167") is not None
+        result = parse_lap_time("1:22.167")
         assert result is not None
         assert abs(result - 82.167) < 0.001
 
     def test_parses_seconds_only(self) -> None:
-        result = _parse_lap_time("82.167")
+        result = parse_lap_time("82.167")
         assert result is not None
         assert abs(result - 82.167) < 0.001
 
     def test_returns_none_for_empty(self) -> None:
-        assert _parse_lap_time("") is None
-        assert _parse_lap_time(None) is None
+        assert parse_lap_time("") is None
+        assert parse_lap_time(None) is None
 
     def test_returns_none_for_invalid(self) -> None:
-        assert _parse_lap_time("abc") is None
+        assert parse_lap_time("abc") is None
 
 
 class TestParseRaceTimeMillis:
