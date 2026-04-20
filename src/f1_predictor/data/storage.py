@@ -86,6 +86,23 @@ def sync_to_local(local_dir: Path) -> list[Path]:
     return downloaded
 
 
+def load_from_gcs_or_local(gcs_blob: str, local_path: Path) -> pd.DataFrame:
+    """Read a parquet file from GCS, falling back to local.
+
+    Use this in notebooks to source data from GCS without
+    downloading the entire bucket first.
+    """
+    try:
+        df = read_parquet_from_gcs(gcs_blob)
+        logger.info("Loaded from GCS: %s", gcs_blob)
+        return df
+    except Exception:
+        logger.warning(
+            "GCS unavailable for %s, reading local: %s", gcs_blob, local_path, exc_info=True
+        )
+        return pd.read_parquet(local_path)
+
+
 def ensure_latest(local_dir: Path) -> pd.DataFrame:
     """Sync from GCS and return the combined DataFrame.
 

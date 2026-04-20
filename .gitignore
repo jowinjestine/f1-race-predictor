@@ -32,6 +32,9 @@ data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+!data/processed/*/
+data/processed/*/*.parquet
+!data/processed/*/.gitkeep
 
 # GCP credentials
 credentials/

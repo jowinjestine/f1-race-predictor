@@ -485,6 +485,7 @@ dev = [
 notebooks = [
     { name = "jupyter" },
     { name = "matplotlib" },
+    { name = "scikit-learn" },
     { name = "seaborn" },
 ]
 
@@ -515,6 +516,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
     { name = "requests", specifier = ">=2.31" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
+    { name = "scikit-learn", marker = "extra == 'notebooks'", specifier = ">=1.4" },
     { name = "seaborn", marker = "extra == 'notebooks'", specifier = ">=0.13" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31" },
 ]
