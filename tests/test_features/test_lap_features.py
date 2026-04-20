@@ -22,27 +22,29 @@ def _make_laps(
     for d in range(n_drivers):
         driver = f"DR{d}"
         for lap in range(1, n_laps + 1):
-            rows.append({
-                "season": season,
-                "round": 1,
-                "event_name": "Test GP",
-                "driver_abbrev": driver,
-                "team": f"Team{d}",
-                "lap_number": lap,
-                "lap_time_sec": 90.0 + d * 2.0 + lap * 0.1,
-                "sector_1_sec": 28.0,
-                "sector_2_sec": 32.0,
-                "sector_3_sec": 30.0,
-                "position": d + 1,
-                "tire_compound": compound,
-                "tire_life": lap,
-                "stint": 1,
-                "is_pit_in_lap": lap == 3,
-                "is_pit_out_lap": lap == 4,
-                "track_status": "1",
-                "is_personal_best": False,
-                "pit_duration_sec": 23.0 if lap == 3 else None,
-            })
+            rows.append(
+                {
+                    "season": season,
+                    "round": 1,
+                    "event_name": "Test GP",
+                    "driver_abbrev": driver,
+                    "team": f"Team{d}",
+                    "lap_number": lap,
+                    "lap_time_sec": 90.0 + d * 2.0 + lap * 0.1,
+                    "sector_1_sec": 28.0,
+                    "sector_2_sec": 32.0,
+                    "sector_3_sec": 30.0,
+                    "position": d + 1,
+                    "tire_compound": compound,
+                    "tire_life": lap,
+                    "stint": 1,
+                    "is_pit_in_lap": lap == 3,
+                    "is_pit_out_lap": lap == 4,
+                    "track_status": "1",
+                    "is_personal_best": False,
+                    "pit_duration_sec": 23.0 if lap == 3 else None,
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -114,8 +116,13 @@ class TestBuildLapNotyreFeatures:
         laps = _make_laps(season=2022)
         result = build_lap_notyre_features(laps)
         tyre_cols = [
-            "compound_SOFT", "compound_MEDIUM", "compound_HARD",
-            "tire_life", "stint", "degradation_rate", "compound_pace_delta",
+            "compound_SOFT",
+            "compound_MEDIUM",
+            "compound_HARD",
+            "tire_life",
+            "stint",
+            "degradation_rate",
+            "compound_pace_delta",
         ]
         for col in tyre_cols:
             assert col not in result.columns

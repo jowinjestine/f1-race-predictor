@@ -83,12 +83,8 @@ def _add_race_normalization(df: pd.DataFrame) -> pd.DataFrame:
 
 def _add_rolling_pace(df: pd.DataFrame) -> pd.DataFrame:
     """Add rolling average lap times (3-lap and 5-lap)."""
-    df["lap_time_rolling_3"] = rolling_mean_by_group(
-        df, DRIVER_RACE_KEY, "lap_time_sec", window=3
-    )
-    df["lap_time_rolling_5"] = rolling_mean_by_group(
-        df, DRIVER_RACE_KEY, "lap_time_sec", window=5
-    )
+    df["lap_time_rolling_3"] = rolling_mean_by_group(df, DRIVER_RACE_KEY, "lap_time_sec", window=3)
+    df["lap_time_rolling_5"] = rolling_mean_by_group(df, DRIVER_RACE_KEY, "lap_time_sec", window=5)
     return df
 
 
@@ -109,11 +105,7 @@ def _add_gap_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add gap to leader and gap to car ahead."""
     df["cum_time"] = df.groupby(DRIVER_RACE_KEY)["lap_time_sec"].cumsum()
 
-    leader_time = (
-        df.groupby([*RACE_KEY, "lap_number"])["cum_time"]
-        .min()
-        .rename("leader_cum_time")
-    )
+    leader_time = df.groupby([*RACE_KEY, "lap_number"])["cum_time"].min().rename("leader_cum_time")
     df = df.join(leader_time, on=[*RACE_KEY, "lap_number"])
     df["gap_to_leader"] = df["cum_time"] - df["leader_cum_time"]
 
@@ -206,8 +198,6 @@ def _compute_compound_pace_delta(df: pd.DataFrame) -> pd.Series:
         .droplevel(list(range(len(compound_key))))
         .sort_index()
     )
-    shifted = compound_median.groupby(
-        df[compound_key].apply(tuple, axis=1), sort=False
-    ).shift(1)
+    shifted = compound_median.groupby(df[compound_key].apply(tuple, axis=1), sort=False).shift(1)
 
     return shifted - race_median

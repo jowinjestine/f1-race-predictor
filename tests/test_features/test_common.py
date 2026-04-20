@@ -42,10 +42,12 @@ class TestSafeDivide:
 
 class TestRollingMeanByGroup:
     def test_basic_rolling_mean(self) -> None:
-        df = pd.DataFrame({
-            "group": ["A", "A", "A", "A"],
-            "value": [10.0, 20.0, 30.0, 40.0],
-        })
+        df = pd.DataFrame(
+            {
+                "group": ["A", "A", "A", "A"],
+                "value": [10.0, 20.0, 30.0, 40.0],
+            }
+        )
         result = rolling_mean_by_group(df, ["group"], "value", window=2)
         assert np.isnan(result.iloc[0])
         assert result.iloc[1] == pytest.approx(10.0)
@@ -53,18 +55,22 @@ class TestRollingMeanByGroup:
         assert result.iloc[3] == pytest.approx(25.0)
 
     def test_shift_prevents_leakage(self) -> None:
-        df = pd.DataFrame({
-            "group": ["A", "A", "A"],
-            "value": [100.0, 200.0, 300.0],
-        })
+        df = pd.DataFrame(
+            {
+                "group": ["A", "A", "A"],
+                "value": [100.0, 200.0, 300.0],
+            }
+        )
         result = rolling_mean_by_group(df, ["group"], "value", window=3)
         assert np.isnan(result.iloc[0])
 
     def test_multiple_groups(self) -> None:
-        df = pd.DataFrame({
-            "group": ["A", "A", "B", "B"],
-            "value": [10.0, 20.0, 100.0, 200.0],
-        })
+        df = pd.DataFrame(
+            {
+                "group": ["A", "A", "B", "B"],
+                "value": [10.0, 20.0, 100.0, 200.0],
+            }
+        )
         result = rolling_mean_by_group(df, ["group"], "value", window=2)
         assert np.isnan(result.iloc[0])
         assert result.iloc[1] == pytest.approx(10.0)
@@ -74,20 +80,24 @@ class TestRollingMeanByGroup:
 
 class TestExpandingMeanByGroup:
     def test_expanding_mean(self) -> None:
-        df = pd.DataFrame({
-            "group": ["A", "A", "A"],
-            "value": [10.0, 20.0, 30.0],
-        })
+        df = pd.DataFrame(
+            {
+                "group": ["A", "A", "A"],
+                "value": [10.0, 20.0, 30.0],
+            }
+        )
         result = expanding_mean_by_group(df, ["group"], "value")
         assert np.isnan(result.iloc[0])
         assert result.iloc[1] == pytest.approx(10.0)
         assert result.iloc[2] == pytest.approx(15.0)
 
     def test_groups_are_independent(self) -> None:
-        df = pd.DataFrame({
-            "group": ["A", "B", "A", "B"],
-            "value": [10.0, 100.0, 20.0, 200.0],
-        })
+        df = pd.DataFrame(
+            {
+                "group": ["A", "B", "A", "B"],
+                "value": [10.0, 100.0, 20.0, 200.0],
+            }
+        )
         result = expanding_mean_by_group(df, ["group"], "value")
         assert np.isnan(result.iloc[0])
         assert np.isnan(result.iloc[1])
@@ -97,10 +107,12 @@ class TestExpandingMeanByGroup:
 
 class TestExpandingSumByGroup:
     def test_expanding_sum(self) -> None:
-        df = pd.DataFrame({
-            "group": ["A", "A", "A"],
-            "value": [10.0, 20.0, 30.0],
-        })
+        df = pd.DataFrame(
+            {
+                "group": ["A", "A", "A"],
+                "value": [10.0, 20.0, 30.0],
+            }
+        )
         result = expanding_sum_by_group(df, ["group"], "value")
         assert np.isnan(result.iloc[0])
         assert result.iloc[1] == pytest.approx(10.0)
@@ -109,10 +121,12 @@ class TestExpandingSumByGroup:
 
 class TestExpandingCountByGroup:
     def test_expanding_count(self) -> None:
-        df = pd.DataFrame({
-            "group": ["A", "A", "A"],
-            "value": [1.0, 1.0, 1.0],
-        })
+        df = pd.DataFrame(
+            {
+                "group": ["A", "A", "A"],
+                "value": [1.0, 1.0, 1.0],
+            }
+        )
         result = expanding_count_by_group(df, ["group"], "value")
         assert np.isnan(result.iloc[0])
         assert result.iloc[1] == pytest.approx(1.0)
@@ -121,10 +135,12 @@ class TestExpandingCountByGroup:
 
 class TestRollingSumByGroup:
     def test_rolling_sum(self) -> None:
-        df = pd.DataFrame({
-            "group": ["A", "A", "A", "A"],
-            "value": [10.0, 20.0, 30.0, 40.0],
-        })
+        df = pd.DataFrame(
+            {
+                "group": ["A", "A", "A", "A"],
+                "value": [10.0, 20.0, 30.0, 40.0],
+            }
+        )
         result = rolling_sum_by_group(df, ["group"], "value", window=2)
         assert np.isnan(result.iloc[0])
         assert result.iloc[1] == pytest.approx(10.0)

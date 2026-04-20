@@ -28,44 +28,46 @@ def _make_races(
             for d in range(drivers_per_round):
                 driver = f"DR{d}"
                 finish = d + 1
-                rows.append({
-                    "season": season,
-                    "round": r,
-                    "event_name": f"Race {r}",
-                    "location": locations[(r - 1) % len(locations)],
-                    "country": "UK",
-                    "event_date": f"{season}-03-{r:02d}",
-                    "driver_number": str(d),
-                    "driver_abbrev": driver,
-                    "driver_id": f"driver{d}",
-                    "first_name": f"First{d}",
-                    "last_name": f"Last{d}",
-                    "team": teams[d],
-                    "team_id": f"team{d // 2}",
-                    "finish_position": float(finish),
-                    "grid_position": float(finish),
-                    "status": "Finished",
-                    "points": max(0.0, 10.0 - d * 3.0),
-                    "laps_completed": 50,
-                    "is_classified": True,
-                    "q1_time_sec": 90.0 + d * 0.5,
-                    "q2_time_sec": 89.0 + d * 0.5 if d < 3 else np.nan,
-                    "q3_time_sec": 88.0 + d * 0.5 if d < 2 else np.nan,
-                    "race_time_sec": 5400.0 + d * 10.0,
-                    "f1_air_temp_mean": 25.0,
-                    "f1_track_temp_mean": 35.0,
-                    "f1_humidity_mean": 50.0,
-                    "f1_pressure_mean": 1013.0,
-                    "f1_wind_speed_mean": 10.0,
-                    "f1_rainfall": False,
-                    "weather_temp_max": 28.0,
-                    "weather_temp_min": 18.0,
-                    "weather_precip_mm": 0.0,
-                    "weather_wind_max_kph": 20.0,
-                    "is_podium": finish <= 3,
-                    "is_points_finish": finish <= 10,
-                    "is_dnf": False,
-                })
+                rows.append(
+                    {
+                        "season": season,
+                        "round": r,
+                        "event_name": f"Race {r}",
+                        "location": locations[(r - 1) % len(locations)],
+                        "country": "UK",
+                        "event_date": f"{season}-03-{r:02d}",
+                        "driver_number": str(d),
+                        "driver_abbrev": driver,
+                        "driver_id": f"driver{d}",
+                        "first_name": f"First{d}",
+                        "last_name": f"Last{d}",
+                        "team": teams[d],
+                        "team_id": f"team{d // 2}",
+                        "finish_position": float(finish),
+                        "grid_position": float(finish),
+                        "status": "Finished",
+                        "points": max(0.0, 10.0 - d * 3.0),
+                        "laps_completed": 50,
+                        "is_classified": True,
+                        "q1_time_sec": 90.0 + d * 0.5,
+                        "q2_time_sec": 89.0 + d * 0.5 if d < 3 else np.nan,
+                        "q3_time_sec": 88.0 + d * 0.5 if d < 2 else np.nan,
+                        "race_time_sec": 5400.0 + d * 10.0,
+                        "f1_air_temp_mean": 25.0,
+                        "f1_track_temp_mean": 35.0,
+                        "f1_humidity_mean": 50.0,
+                        "f1_pressure_mean": 1013.0,
+                        "f1_wind_speed_mean": 10.0,
+                        "f1_rainfall": False,
+                        "weather_temp_max": 28.0,
+                        "weather_temp_min": 18.0,
+                        "weather_precip_mm": 0.0,
+                        "weather_wind_max_kph": 20.0,
+                        "is_podium": finish <= 3,
+                        "is_points_finish": finish <= 10,
+                        "is_dnf": False,
+                    }
+                )
     return pd.DataFrame(rows)
 
 
@@ -74,17 +76,29 @@ class TestBuildRaceFeatures:
         races = _make_races()
         result = build_race_features(races)
         expected = [
-            "best_quali_sec", "quali_delta_to_pole", "grid_position",
+            "best_quali_sec",
+            "quali_delta_to_pole",
+            "grid_position",
             "quali_position_vs_teammate",
-            "avg_finish_last_3", "avg_finish_last_5",
-            "points_last_3", "points_cumulative_season",
-            "dnf_rate_season", "position_trend",
-            "driver_circuit_avg_finish", "driver_circuit_races",
-            "driver_circuit_podium_rate", "driver_circuit_dnf_rate",
-            "team_avg_finish_last_3", "team_points_cumulative_season",
-            "circuit_street", "circuit_permanent", "circuit_hybrid",
+            "avg_finish_last_3",
+            "avg_finish_last_5",
+            "points_last_3",
+            "points_cumulative_season",
+            "dnf_rate_season",
+            "position_trend",
+            "driver_circuit_avg_finish",
+            "driver_circuit_races",
+            "driver_circuit_podium_rate",
+            "driver_circuit_dnf_rate",
+            "team_avg_finish_last_3",
+            "team_points_cumulative_season",
+            "circuit_street",
+            "circuit_permanent",
+            "circuit_hybrid",
             "circuit_avg_dnf_rate",
-            "weather_temp_max", "weather_precip_mm", "weather_wind_max_kph",
+            "weather_temp_max",
+            "weather_precip_mm",
+            "weather_wind_max_kph",
             "is_wet_race",
         ]
         for col in expected:
@@ -256,13 +270,13 @@ class TestLeakagePrevention:
         result_truncated = build_race_features(races_truncated)
 
         r3_full = result_full[result_full["round"] == 3].sort_values("driver_abbrev")
-        r3_trunc = result_truncated[result_truncated["round"] == 3].sort_values(
-            "driver_abbrev"
-        )
+        r3_trunc = result_truncated[result_truncated["round"] == 3].sort_values("driver_abbrev")
 
         check_cols = [
-            "avg_finish_last_3", "points_last_3",
-            "points_cumulative_season", "dnf_rate_season",
+            "avg_finish_last_3",
+            "points_last_3",
+            "points_cumulative_season",
+            "dnf_rate_season",
         ]
         for col in check_cols:
             pd.testing.assert_series_equal(

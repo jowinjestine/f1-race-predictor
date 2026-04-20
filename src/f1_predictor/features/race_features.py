@@ -28,12 +28,22 @@ LOCATION_ALIASES: dict[str, str] = {
     "Portimão": "Portimao",
 }
 
-STREET_CIRCUITS: frozenset[str] = frozenset({
-    "Monaco", "Singapore", "Baku", "Jeddah", "Las Vegas",
-})
-HYBRID_CIRCUITS: frozenset[str] = frozenset({
-    "Melbourne", "Miami", "Montreal",
-})
+STREET_CIRCUITS: frozenset[str] = frozenset(
+    {
+        "Monaco",
+        "Singapore",
+        "Baku",
+        "Jeddah",
+        "Las Vegas",
+    }
+)
+HYBRID_CIRCUITS: frozenset[str] = frozenset(
+    {
+        "Melbourne",
+        "Miami",
+        "Montreal",
+    }
+)
 
 
 def build_race_features(races: pd.DataFrame) -> pd.DataFrame:
@@ -86,9 +96,7 @@ def build_race_features(races: pd.DataFrame) -> pd.DataFrame:
 
 def _add_qualifying_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add qualifying-derived features (not leakage — qualifying is pre-race)."""
-    df["best_quali_sec"] = df[["q1_time_sec", "q2_time_sec", "q3_time_sec"]].min(
-        axis=1
-    )
+    df["best_quali_sec"] = df[["q1_time_sec", "q2_time_sec", "q3_time_sec"]].min(axis=1)
 
     pole_time = df.groupby(RACE_KEY)["best_quali_sec"].transform("min")
     df["quali_delta_to_pole"] = df["best_quali_sec"] - pole_time
@@ -108,21 +116,11 @@ def _add_season_form_features(df: pd.DataFrame) -> pd.DataFrame:
     driver_key = ["driver_abbrev"]
     season_driver_key = ["season", "driver_abbrev"]
 
-    df["avg_finish_last_3"] = rolling_mean_by_group(
-        df, driver_key, "finish_position", window=3
-    )
-    df["avg_finish_last_5"] = rolling_mean_by_group(
-        df, driver_key, "finish_position", window=5
-    )
-    df["points_last_3"] = rolling_sum_by_group(
-        df, driver_key, "points", window=3
-    )
-    df["points_cumulative_season"] = expanding_sum_by_group(
-        df, season_driver_key, "points"
-    )
-    df["dnf_rate_season"] = expanding_mean_by_group(
-        df, season_driver_key, "is_dnf_int"
-    )
+    df["avg_finish_last_3"] = rolling_mean_by_group(df, driver_key, "finish_position", window=3)
+    df["avg_finish_last_5"] = rolling_mean_by_group(df, driver_key, "finish_position", window=5)
+    df["points_last_3"] = rolling_sum_by_group(df, driver_key, "points", window=3)
+    df["points_cumulative_season"] = expanding_sum_by_group(df, season_driver_key, "points")
+    df["dnf_rate_season"] = expanding_mean_by_group(df, season_driver_key, "is_dnf_int")
     df["position_trend"] = _compute_position_trend(df)
     return df
 
@@ -147,18 +145,10 @@ def _add_driver_circuit_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add driver circuit history features (expanding, shifted)."""
     dc_key = ["driver_abbrev", "location_norm"]
 
-    df["driver_circuit_avg_finish"] = expanding_mean_by_group(
-        df, dc_key, "finish_position"
-    )
-    df["driver_circuit_races"] = expanding_count_by_group(
-        df, dc_key, "finish_position"
-    )
-    df["driver_circuit_podium_rate"] = expanding_mean_by_group(
-        df, dc_key, "is_podium_int"
-    )
-    df["driver_circuit_dnf_rate"] = expanding_mean_by_group(
-        df, dc_key, "is_dnf_int"
-    )
+    df["driver_circuit_avg_finish"] = expanding_mean_by_group(df, dc_key, "finish_position")
+    df["driver_circuit_races"] = expanding_count_by_group(df, dc_key, "finish_position")
+    df["driver_circuit_podium_rate"] = expanding_mean_by_group(df, dc_key, "is_podium_int")
+    df["driver_circuit_dnf_rate"] = expanding_mean_by_group(df, dc_key, "is_dnf_int")
     return df
 
 
@@ -182,9 +172,7 @@ def _add_team_form_features(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     df = df.merge(
-        team_race[
-            [*RACE_KEY, "team", "team_avg_finish_last_3", "team_points_cumulative_season"]
-        ],
+        team_race[[*RACE_KEY, "team", "team_avg_finish_last_3", "team_points_cumulative_season"]],
         on=[*RACE_KEY, "team"],
         how="left",
     )
@@ -195,9 +183,9 @@ def _add_circuit_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add circuit type and historical DNF rate."""
     df["circuit_street"] = df["location_norm"].isin(STREET_CIRCUITS).astype(int)
     df["circuit_hybrid"] = df["location_norm"].isin(HYBRID_CIRCUITS).astype(int)
-    df["circuit_permanent"] = (
-        ~df["location_norm"].isin(STREET_CIRCUITS | HYBRID_CIRCUITS)
-    ).astype(int)
+    df["circuit_permanent"] = (~df["location_norm"].isin(STREET_CIRCUITS | HYBRID_CIRCUITS)).astype(
+        int
+    )
 
     race_dnf = (
         df.groupby([*RACE_KEY, "location_norm"])["is_dnf_int"]
