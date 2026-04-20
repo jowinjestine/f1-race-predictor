@@ -94,6 +94,49 @@ def _parse_race_time_millis(millis_str: str | None) -> float | None:
         return None
 
 
+def get_laps(year: int, round_num: int) -> list[dict[str, Any]]:
+    """Return list of lap dicts with timing info for a specific race."""
+    data = _get_json(f"{BASE_URL}/{year}/{round_num}/laps.json?limit=2000")
+    if data is None:
+        return []
+    races = data.get("MRData", {}).get("RaceTable", {}).get("Races", [])
+    if not races:
+        return []
+    return races[0].get("Laps", [])  # type: ignore[no-any-return]
+
+
+def get_pitstops(year: int, round_num: int) -> list[dict[str, Any]]:
+    """Return list of pit stop dicts for a specific race (paginated)."""
+    limit = 100
+    offset = 0
+    pitstops: list[dict[str, Any]] = []
+
+    while True:
+        data = _get_json(
+            f"{BASE_URL}/{year}/{round_num}/pitstops.json?limit={limit}&offset={offset}"
+        )
+        if data is None:
+            return []
+
+        mrdata = data.get("MRData", {})
+        races = mrdata.get("RaceTable", {}).get("Races", [])
+        if not races:
+            return pitstops
+
+        page = races[0].get("PitStops", [])
+        pitstops.extend(page)
+
+        try:
+            total = int(mrdata.get("total", len(pitstops)))
+        except (TypeError, ValueError):
+            return pitstops
+
+        if offset + limit >= total:
+            return pitstops
+
+        offset += limit
+
+
 def collect_season_jolpica(year: int) -> pd.DataFrame:  # pragma: no cover
     """Collect all race results + qualifying for a season from Jolpica."""
     logger.info("Collecting season %d from Jolpica", year)

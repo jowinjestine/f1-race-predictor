@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 
 from f1_predictor.data.jolpica import (
     _parse_race_time_millis,
+    get_laps,
+    get_pitstops,
     get_qualifying_results,
     get_race_results,
     get_season_schedule,
@@ -127,6 +129,107 @@ class TestGetQualifyingResults:
     def test_returns_empty_for_no_races(self, mock_get: MagicMock) -> None:
         mock_get.return_value = {"MRData": {"RaceTable": {"Races": []}}}
         assert get_qualifying_results(2025, 1) == []
+
+
+class TestGetLaps:
+    @patch("f1_predictor.data.jolpica._get_json")
+    def test_returns_laps(self, mock_get: MagicMock) -> None:
+        mock_get.return_value = {
+            "MRData": {
+                "RaceTable": {
+                    "Races": [
+                        {
+                            "Laps": [
+                                {
+                                    "number": "1",
+                                    "Timings": [
+                                        {"driverId": "ver", "position": "1", "time": "1:34.523"},
+                                    ],
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        }
+        laps = get_laps(2025, 1)
+        assert len(laps) == 1
+        assert laps[0]["number"] == "1"
+        assert len(laps[0]["Timings"]) == 1
+
+    @patch("f1_predictor.data.jolpica._get_json")
+    def test_returns_empty_on_failure(self, mock_get: MagicMock) -> None:
+        mock_get.return_value = None
+        assert get_laps(2025, 1) == []
+
+    @patch("f1_predictor.data.jolpica._get_json")
+    def test_returns_empty_for_no_races(self, mock_get: MagicMock) -> None:
+        mock_get.return_value = {"MRData": {"RaceTable": {"Races": []}}}
+        assert get_laps(2025, 1) == []
+
+
+class TestGetPitstops:
+    @patch("f1_predictor.data.jolpica._get_json")
+    def test_returns_pitstops(self, mock_get: MagicMock) -> None:
+        mock_get.return_value = {
+            "MRData": {
+                "total": "1",
+                "limit": "100",
+                "offset": "0",
+                "RaceTable": {
+                    "Races": [
+                        {
+                            "PitStops": [
+                                {
+                                    "driverId": "ver",
+                                    "lap": "15",
+                                    "stop": "1",
+                                    "duration": "23.500",
+                                },
+                            ]
+                        }
+                    ]
+                },
+            }
+        }
+        stops = get_pitstops(2025, 1)
+        assert len(stops) == 1
+        assert stops[0]["driverId"] == "ver"
+        assert stops[0]["duration"] == "23.500"
+
+    @patch("f1_predictor.data.jolpica._get_json")
+    def test_paginates_pitstops(self, mock_get: MagicMock) -> None:
+        page1 = {
+            "MRData": {
+                "total": "101",
+                "limit": "100",
+                "offset": "0",
+                "RaceTable": {"Races": [{"PitStops": [{"driverId": "ver", "lap": "15"}]}]},
+            }
+        }
+        page2 = {
+            "MRData": {
+                "total": "101",
+                "limit": "100",
+                "offset": "100",
+                "RaceTable": {"Races": [{"PitStops": [{"driverId": "nor", "lap": "20"}]}]},
+            }
+        }
+        mock_get.side_effect = [page1, page2]
+        stops = get_pitstops(2025, 1)
+        assert len(stops) == 2
+        assert stops[0]["driverId"] == "ver"
+        assert stops[1]["driverId"] == "nor"
+
+    @patch("f1_predictor.data.jolpica._get_json")
+    def test_returns_empty_on_failure(self, mock_get: MagicMock) -> None:
+        mock_get.return_value = None
+        assert get_pitstops(2025, 1) == []
+
+    @patch("f1_predictor.data.jolpica._get_json")
+    def test_returns_empty_for_no_races(self, mock_get: MagicMock) -> None:
+        mock_get.return_value = {"MRData": {"total": "0", "RaceTable": {"Races": []}}}
+        assert get_pitstops(2025, 1) == []
 
 
 class TestParseRaceTimeMillisEdge:

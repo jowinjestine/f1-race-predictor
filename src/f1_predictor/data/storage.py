@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 BUCKET_NAME = os.environ.get("F1_GCS_BUCKET", "f1-predictor-artifacts-jowin")
-GCS_PREFIX = os.environ.get("F1_GCS_PREFIX", "data/raw")
+GCS_PREFIX = os.environ.get("F1_GCS_PREFIX", "data/raw/race")
 GCP_PROJECT = os.environ.get("F1_GCP_PROJECT", "jowin-personal-2026")
 
 

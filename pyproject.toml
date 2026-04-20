@@ -82,3 +82,12 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=f1_predictor --cov-report=term-missing --cov-fail-under=70"
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.2.0",
+    "jupyter>=1.1.1",
+    "matplotlib>=3.10.8",
+    "nbconvert>=7.17.1",
+    "seaborn>=0.13.2",
+]

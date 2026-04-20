@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 FASTF1_SEASONS = range(2018, 2025)
 JOLPICA_ONLY_SEASONS = range(2025, 2026)
 CACHE_DIR = Path.home() / ".fastf1_cache"
-DEFAULT_DATA_DIR = Path.home() / ".local" / "share" / "f1-predictor" / "raw"
+DEFAULT_DATA_DIR = Path.home() / ".local" / "share" / "f1-predictor" / "raw" / "race"
 
 OPENMETEO_URL = "https://archive-api.open-meteo.com/v1/archive"
 
@@ -383,7 +383,7 @@ def add_target_variables(df: pd.DataFrame) -> pd.DataFrame:
 
 if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    project_data_dir = Path(__file__).resolve().parents[3] / "data" / "raw"
+    project_data_dir = Path(__file__).resolve().parents[3] / "data" / "raw" / "race"
     df = collect_all(output_dir=project_data_dir, upload_gcs=True)
     if len(df) > 0:
         print(f"\nDone! {len(df)} rows, {len(df.columns)} columns")
