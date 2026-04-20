@@ -75,9 +75,32 @@ def _build_lap_features(df: pd.DataFrame, *, include_tyre: bool) -> pd.DataFrame
 
 
 def _add_race_normalization(df: pd.DataFrame) -> pd.DataFrame:
-    """Add lap time delta from race median."""
-    race_median = df.groupby(RACE_KEY)["lap_time_sec"].transform("median")
-    df["lap_time_delta_race_median"] = df["lap_time_sec"] - race_median
+    """Add lap time delta from expanding race median (no future-lap leakage)."""
+    race_lap = (
+        df.groupby([*RACE_KEY, "lap_number"])["lap_time_sec"]
+        .median()
+        .reset_index()
+        .rename(columns={"lap_time_sec": "_lap_median"})
+    )
+    race_lap = race_lap.sort_values([*RACE_KEY, "lap_number"]).reset_index(drop=True)
+
+    race_codes = race_lap.groupby(RACE_KEY, sort=False).ngroup()
+    exp_med = (
+        race_lap.groupby(race_codes, sort=False)["_lap_median"]
+        .expanding()
+        .median()
+        .droplevel(0)
+        .sort_index()
+    )
+    race_lap["_baseline"] = exp_med.groupby(race_codes, sort=False).shift(1)
+
+    df = df.merge(
+        race_lap[[*RACE_KEY, "lap_number", "_baseline"]],
+        on=[*RACE_KEY, "lap_number"],
+        how="left",
+    )
+    df["lap_time_delta_race_median"] = df["lap_time_sec"] - df["_baseline"]
+    df = df.drop(columns=["_baseline"])
     return df
 
 
@@ -172,7 +195,7 @@ def _add_tyre_features(df: pd.DataFrame) -> pd.DataFrame:
 def _compute_degradation_rate(df: pd.DataFrame) -> pd.Series:
     """OLS slope of lap_time_sec over tire_life within each stint."""
     stint_key = ["season", "round", "driver_abbrev", "stint"]
-    deg = pd.Series(0.0, index=df.index)
+    deg = pd.Series(np.nan, index=df.index)
 
     for _, group in df.groupby(stint_key, sort=False):
         times = group["lap_time_sec"].values
@@ -187,17 +210,20 @@ def _compute_degradation_rate(df: pd.DataFrame) -> pd.Series:
 
 
 def _compute_compound_pace_delta(df: pd.DataFrame) -> pd.Series:
-    """Expanding median of compound lap time minus race median, shifted."""
-    race_median = df.groupby(RACE_KEY)["lap_time_sec"].transform("median")
-    compound_key = ["season", "round", "tire_compound"]
+    """Expanding median of compound lap time minus expanding race baseline, shifted."""
+    chrono = df.sort_values([*RACE_KEY, "lap_number", "driver_abbrev"])
 
-    compound_median = (
-        df.groupby(compound_key, sort=False)["lap_time_sec"]
-        .expanding()
-        .median()
-        .droplevel(list(range(len(compound_key))))
-        .sort_index()
+    race_codes = chrono.groupby(RACE_KEY, sort=False).ngroup()
+    race_baseline = (
+        chrono.groupby(race_codes, sort=False)["lap_time_sec"].expanding().median().droplevel(0)
     )
-    shifted = compound_median.groupby(df[compound_key].apply(tuple, axis=1), sort=False).shift(1)
+    race_baseline = race_baseline.groupby(race_codes, sort=False).shift(1)
 
-    return shifted - race_median
+    compound_key = [*RACE_KEY, "tire_compound"]
+    compound_codes = chrono.groupby(compound_key, sort=False).ngroup()
+    compound_med = (
+        chrono.groupby(compound_codes, sort=False)["lap_time_sec"].expanding().median().droplevel(0)
+    )
+    compound_med = compound_med.groupby(compound_codes, sort=False).shift(1)
+
+    return (compound_med - race_baseline).reindex(df.index)

@@ -160,3 +160,33 @@ class TestBuildLapNotyreFeatures:
         result = build_lap_notyre_features(laps)
         row = result[result["lap_number"] == 3]
         assert row["position_change_from_lap1"].iloc[0] == 2
+
+
+class TestLeakagePrevention:
+    def test_no_future_lap_in_race_normalization(self) -> None:
+        """Removing future laps shouldn't change past normalization."""
+        laps_full = _make_laps(season=2022, n_drivers=2, n_laps=5)
+        laps_trunc = laps_full[laps_full["lap_number"] <= 3].copy()
+
+        result_full = build_lap_notyre_features(laps_full)
+        result_trunc = build_lap_notyre_features(laps_trunc)
+
+        lap2_full = result_full[result_full["lap_number"] == 2].sort_values("driver_abbrev")
+        lap2_trunc = result_trunc[result_trunc["lap_number"] == 2].sort_values("driver_abbrev")
+
+        pd.testing.assert_series_equal(
+            lap2_full["lap_time_delta_race_median"].reset_index(drop=True),
+            lap2_trunc["lap_time_delta_race_median"].reset_index(drop=True),
+            check_names=False,
+        )
+
+    def test_first_lap_race_normalization_is_nan(self) -> None:
+        laps = _make_laps(season=2022, n_drivers=1, n_laps=3)
+        result = build_lap_notyre_features(laps)
+        first_lap = result[result["lap_number"] == 1]
+        assert first_lap["lap_time_delta_race_median"].isna().all()
+
+    def test_degradation_rate_nan_when_insufficient_data(self) -> None:
+        laps = _make_laps(season=2022, n_drivers=1, n_laps=2)
+        result = build_lap_tyre_features(laps)
+        assert result["degradation_rate"].isna().all()

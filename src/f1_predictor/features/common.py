@@ -26,9 +26,10 @@ def rolling_mean_by_group(
 
     The current row is never included in its own rolling window.
     """
+    group_codes = df.groupby(group_cols, sort=False).ngroup()
     shifted: pd.Series = df.groupby(group_cols, sort=False)[value_col].shift(1)
     result: pd.Series = (
-        shifted.groupby(df[group_cols].apply(tuple, axis=1), sort=False)
+        shifted.groupby(group_codes, sort=False)
         .rolling(window=window, min_periods=min_periods)
         .mean()
         .droplevel(0)
@@ -43,6 +44,7 @@ def expanding_mean_by_group(
     value_col: str,
 ) -> pd.Series:
     """Grouped expanding mean with shift(1) to prevent data leakage."""
+    group_codes = df.groupby(group_cols, sort=False).ngroup()
     result: pd.Series = (
         df.groupby(group_cols, sort=False)[value_col]
         .expanding()
@@ -50,7 +52,7 @@ def expanding_mean_by_group(
         .droplevel(list(range(len(group_cols))))
         .sort_index()
     )
-    return result.groupby(df[group_cols].apply(tuple, axis=1), sort=False).shift(1)
+    return result.groupby(group_codes, sort=False).shift(1)
 
 
 def expanding_sum_by_group(
@@ -59,6 +61,7 @@ def expanding_sum_by_group(
     value_col: str,
 ) -> pd.Series:
     """Grouped expanding sum with shift(1) to prevent data leakage."""
+    group_codes = df.groupby(group_cols, sort=False).ngroup()
     result: pd.Series = (
         df.groupby(group_cols, sort=False)[value_col]
         .expanding()
@@ -66,7 +69,7 @@ def expanding_sum_by_group(
         .droplevel(list(range(len(group_cols))))
         .sort_index()
     )
-    return result.groupby(df[group_cols].apply(tuple, axis=1), sort=False).shift(1)
+    return result.groupby(group_codes, sort=False).shift(1)
 
 
 def expanding_count_by_group(
@@ -75,6 +78,7 @@ def expanding_count_by_group(
     value_col: str,
 ) -> pd.Series:
     """Grouped expanding count with shift(1) to prevent data leakage."""
+    group_codes = df.groupby(group_cols, sort=False).ngroup()
     result: pd.Series = (
         df.groupby(group_cols, sort=False)[value_col]
         .expanding()
@@ -82,7 +86,7 @@ def expanding_count_by_group(
         .droplevel(list(range(len(group_cols))))
         .sort_index()
     )
-    return result.groupby(df[group_cols].apply(tuple, axis=1), sort=False).shift(1)
+    return result.groupby(group_codes, sort=False).shift(1)
 
 
 def rolling_sum_by_group(
@@ -93,9 +97,10 @@ def rolling_sum_by_group(
     min_periods: int = 1,
 ) -> pd.Series:
     """Grouped rolling sum with shift(1) to prevent data leakage."""
+    group_codes = df.groupby(group_cols, sort=False).ngroup()
     shifted: pd.Series = df.groupby(group_cols, sort=False)[value_col].shift(1)
     result: pd.Series = (
-        shifted.groupby(df[group_cols].apply(tuple, axis=1), sort=False)
+        shifted.groupby(group_codes, sort=False)
         .rolling(window=window, min_periods=min_periods)
         .sum()
         .droplevel(0)

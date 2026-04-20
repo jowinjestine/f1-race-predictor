@@ -285,3 +285,22 @@ class TestLeakagePrevention:
                 check_names=False,
                 obj=col,
             )
+
+    def test_no_future_data_in_weather_imputation(self) -> None:
+        """Removing a future race shouldn't change past weather values."""
+        races_full = _make_races(n_seasons=1, rounds_per_season=3, drivers_per_round=1)
+        races_full.loc[races_full["round"] == 2, "weather_temp_max"] = np.nan
+
+        races_trunc = races_full[races_full["round"] <= 2].copy()
+
+        result_full = build_race_features(races_full)
+        result_trunc = build_race_features(races_trunc)
+
+        r2_full = result_full[result_full["round"] == 2]
+        r2_trunc = result_trunc[result_trunc["round"] == 2]
+
+        pd.testing.assert_series_equal(
+            r2_full["weather_temp_max"].reset_index(drop=True),
+            r2_trunc["weather_temp_max"].reset_index(drop=True),
+            check_names=False,
+        )

@@ -206,19 +206,43 @@ def _add_circuit_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _add_weather_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Add weather features with circuit-mean imputation for nulls."""
-    circuit_temp = df.groupby("location_norm")["weather_temp_max"].transform("mean")
-    df["weather_temp_max"] = df["weather_temp_max"].fillna(circuit_temp)
-    df["weather_temp_max"] = df["weather_temp_max"].fillna(df["weather_temp_max"].mean())
+def _impute_weather_historical(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    """Impute weather nulls using expanding mean of prior races at same circuit."""
+    race_weather = df.groupby([*RACE_KEY, "location_norm"])[col].mean().reset_index()
+    race_weather = race_weather.sort_values(RACE_KEY).reset_index(drop=True)
 
-    df["weather_precip_mm"] = df["weather_precip_mm"].fillna(0.0)
-
-    circuit_wind = df.groupby("location_norm")["weather_wind_max_kph"].transform("mean")
-    df["weather_wind_max_kph"] = df["weather_wind_max_kph"].fillna(circuit_wind)
-    df["weather_wind_max_kph"] = df["weather_wind_max_kph"].fillna(
-        df["weather_wind_max_kph"].mean()
+    circuit_codes = race_weather.groupby("location_norm", sort=False).ngroup()
+    circuit_hist = (
+        race_weather.groupby(circuit_codes, sort=False)[col]
+        .expanding()
+        .mean()
+        .droplevel(0)
+        .sort_index()
     )
+    race_weather["_hist"] = circuit_hist.groupby(circuit_codes, sort=False).shift(1)
+    race_weather["_global"] = race_weather[col].expanding().mean().shift(1)
+    race_weather["_imputed"] = (
+        race_weather[col]
+        .fillna(race_weather["_hist"])
+        .fillna(race_weather["_global"])
+        .fillna(race_weather[col].mean())
+    )
+
+    df = df.merge(
+        race_weather[[*RACE_KEY, "location_norm", "_imputed"]],
+        on=[*RACE_KEY, "location_norm"],
+        how="left",
+    )
+    df[col] = df[col].fillna(df["_imputed"])
+    df = df.drop(columns=["_imputed"])
+    return df
+
+
+def _add_weather_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Add weather features with historical-only expanding imputation."""
+    df = _impute_weather_historical(df, "weather_temp_max")
+    df = _impute_weather_historical(df, "weather_wind_max_kph")
+    df["weather_precip_mm"] = df["weather_precip_mm"].fillna(0.0)
 
     is_rainfall = df["f1_rainfall"].eq(True).fillna(False)
     df["is_wet_race"] = (is_rainfall | (df["weather_precip_mm"] > 1.0)).astype(int)
