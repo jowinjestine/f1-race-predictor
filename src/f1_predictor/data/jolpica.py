@@ -106,14 +106,35 @@ def get_laps(year: int, round_num: int) -> list[dict[str, Any]]:
 
 
 def get_pitstops(year: int, round_num: int) -> list[dict[str, Any]]:
-    """Return list of pit stop dicts for a specific race."""
-    data = _get_json(f"{BASE_URL}/{year}/{round_num}/pitstops.json?limit=100")
-    if data is None:
-        return []
-    races = data.get("MRData", {}).get("RaceTable", {}).get("Races", [])
-    if not races:
-        return []
-    return races[0].get("PitStops", [])  # type: ignore[no-any-return]
+    """Return list of pit stop dicts for a specific race (paginated)."""
+    limit = 100
+    offset = 0
+    pitstops: list[dict[str, Any]] = []
+
+    while True:
+        data = _get_json(
+            f"{BASE_URL}/{year}/{round_num}/pitstops.json?limit={limit}&offset={offset}"
+        )
+        if data is None:
+            return []
+
+        mrdata = data.get("MRData", {})
+        races = mrdata.get("RaceTable", {}).get("Races", [])
+        if not races:
+            return pitstops
+
+        page = races[0].get("PitStops", [])
+        pitstops.extend(page)
+
+        try:
+            total = int(mrdata.get("total", len(pitstops)))
+        except (TypeError, ValueError):
+            return pitstops
+
+        if offset + limit >= total:
+            return pitstops
+
+        offset += limit
 
 
 def collect_season_jolpica(year: int) -> pd.DataFrame:  # pragma: no cover

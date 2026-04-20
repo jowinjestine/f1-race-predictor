@@ -118,11 +118,19 @@ def collect_laps_fastf1(year: int) -> pd.DataFrame:  # pragma: no cover
 def _build_pitstop_map(
     pitstops: list[dict[str, Any]],
 ) -> dict[tuple[str, int], float | None]:
-    """Build (driverId, lap) -> pit_duration_sec map from Jolpica pitstop data."""
+    """Build (driverId, lap) -> pit_duration_sec map from Jolpica pitstop data.
+
+    Keys use Jolpica driverId (e.g. "max_verstappen"), not the 3-letter code.
+    Callers using driver_abbrev must convert keys or use a code-keyed map.
+    """
     pit_map: dict[tuple[str, int], float | None] = {}
     for ps in pitstops:
-        driver_id = ps.get("driverId", "")
-        lap = int(ps.get("lap", 0))
+        driver_id = ps.get("driverId")
+        if not driver_id:
+            continue
+        lap = _safe_int(ps.get("lap"))
+        if lap is None:
+            continue
         duration_str = ps.get("duration")
         duration = parse_lap_time(duration_str) if duration_str else None
         pit_map[(driver_id, lap)] = duration
@@ -242,20 +250,23 @@ def collect_laps_jolpica(year: int) -> pd.DataFrame:  # pragma: no cover
 
 
 def add_pit_duration(
-    df: pd.DataFrame, pit_map: dict[tuple[str, int], float | None]
+    df: pd.DataFrame,
+    pit_map: dict[tuple[str, int], float | None],
 ) -> pd.DataFrame:
-    """Add pit_duration_sec column from a precomputed pit stop map."""
+    """Add pit_duration_sec column using a (driver_abbrev, lap) keyed map."""
     if "pit_duration_sec" in df.columns:
         return df
     df = df.copy()
-    df["pit_duration_sec"] = None
-    for idx in df.index:
-        driver = str(df.at[idx, "driver_abbrev"])
-        lap_val = df.at[idx, "lap_number"]
-        lap = int(str(lap_val))
-        duration = pit_map.get((driver, lap))
-        if duration is not None:
-            df.at[idx, "pit_duration_sec"] = duration
+    if not pit_map:
+        df["pit_duration_sec"] = None
+        return df
+    lap_numbers = pd.to_numeric(df["lap_number"], errors="coerce")
+    drivers = df["driver_abbrev"].astype(str)
+    durations = [
+        pit_map.get((drv, int(lap))) if pd.notna(lap) else None
+        for drv, lap in zip(drivers, lap_numbers, strict=True)
+    ]
+    df["pit_duration_sec"] = pd.array(durations, dtype="object")
     return df
 
 

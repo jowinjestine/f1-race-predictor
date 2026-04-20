@@ -173,6 +173,9 @@ class TestGetPitstops:
     def test_returns_pitstops(self, mock_get: MagicMock) -> None:
         mock_get.return_value = {
             "MRData": {
+                "total": "1",
+                "limit": "100",
+                "offset": "0",
                 "RaceTable": {
                     "Races": [
                         {
@@ -186,7 +189,7 @@ class TestGetPitstops:
                             ]
                         }
                     ]
-                }
+                },
             }
         }
         stops = get_pitstops(2025, 1)
@@ -195,13 +198,37 @@ class TestGetPitstops:
         assert stops[0]["duration"] == "23.500"
 
     @patch("f1_predictor.data.jolpica._get_json")
+    def test_paginates_pitstops(self, mock_get: MagicMock) -> None:
+        page1 = {
+            "MRData": {
+                "total": "101",
+                "limit": "100",
+                "offset": "0",
+                "RaceTable": {"Races": [{"PitStops": [{"driverId": "ver", "lap": "15"}]}]},
+            }
+        }
+        page2 = {
+            "MRData": {
+                "total": "101",
+                "limit": "100",
+                "offset": "100",
+                "RaceTable": {"Races": [{"PitStops": [{"driverId": "nor", "lap": "20"}]}]},
+            }
+        }
+        mock_get.side_effect = [page1, page2]
+        stops = get_pitstops(2025, 1)
+        assert len(stops) == 2
+        assert stops[0]["driverId"] == "ver"
+        assert stops[1]["driverId"] == "nor"
+
+    @patch("f1_predictor.data.jolpica._get_json")
     def test_returns_empty_on_failure(self, mock_get: MagicMock) -> None:
         mock_get.return_value = None
         assert get_pitstops(2025, 1) == []
 
     @patch("f1_predictor.data.jolpica._get_json")
     def test_returns_empty_for_no_races(self, mock_get: MagicMock) -> None:
-        mock_get.return_value = {"MRData": {"RaceTable": {"Races": []}}}
+        mock_get.return_value = {"MRData": {"total": "0", "RaceTable": {"Races": []}}}
         assert get_pitstops(2025, 1) == []
 
 

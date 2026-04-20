@@ -87,7 +87,7 @@ Base fields in `data/raw/laps/all_laps.parquet` and per-season `data/raw/laps/la
 | `season` | int | Calendar year (2018-2025) | FastF1 / Jolpica |
 | `round` | int | Round number within the season | FastF1 / Jolpica |
 | `event_name` | str | Grand Prix name | FastF1 / Jolpica |
-| `driver_abbrev` | str | Three-letter abbreviation (e.g. "VER") | FastF1 / Jolpica |
+| `driver_abbrev` | str | Usually a three-letter abbreviation (e.g. "VER"); may contain the Jolpica `driverId` when no code is available | FastF1 / Jolpica |
 | `team` | str | Constructor/team name | FastF1 / Jolpica |
 
 ## Lap Data
@@ -121,7 +121,7 @@ Base fields in `data/raw/laps/all_laps.parquet` and per-season `data/raw/laps/la
 
 | Column | Type | Description | Source |
 |--------|------|-------------|--------|
-| `track_status` | str | Track status code (e.g. "1" = green, "4" = SC, "6" = VSC) | FastF1 only (null for 2025) |
+| `track_status` | str/null | Track status code (e.g. "1" = green, "4" = SC, "6" = VSC) | FastF1 only (null for 2025) |
 | `is_personal_best` | bool | Whether this was the driver's fastest lap so far | FastF1 only (false for 2025) |
 
 ## Lap-Level Notes

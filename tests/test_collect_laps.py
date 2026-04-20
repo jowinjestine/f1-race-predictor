@@ -86,6 +86,14 @@ class TestBuildPitstopMap:
         result = _build_pitstop_map(pitstops)
         assert result[("ver", 10)] is None
 
+    def test_skips_missing_driver_id(self) -> None:
+        pitstops = [{"lap": "10", "stop": "1", "duration": "23.0"}]
+        assert _build_pitstop_map(pitstops) == {}
+
+    def test_skips_invalid_lap(self) -> None:
+        pitstops = [{"driverId": "ver", "lap": "abc", "stop": "1", "duration": "23.0"}]
+        assert _build_pitstop_map(pitstops) == {}
+
 
 class TestBuildDriverIdToCode:
     def test_builds_mapping(self) -> None:
