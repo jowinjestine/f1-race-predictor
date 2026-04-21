@@ -34,6 +34,11 @@ notebooks = [
     "seaborn>=0.13",
     "scikit-learn>=1.4",
 ]
+training = [
+    "xgboost>=2.0",
+    "lightgbm>=4.0",
+    "optuna>=3.6",
+]
 
 [build-system]
 requires = ["hatchling"]
