@@ -979,7 +979,9 @@ warnings.filterwarnings("ignore", category=UserWarning)
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 TRAINING_DIR = Path("data/training")
-MODEL_DIR = Path("data/raw/model")"""),
+MODEL_DIR = Path("data/raw/model")
+TRAINING_DIR.mkdir(parents=True, exist_ok=True)
+MODEL_DIR.mkdir(parents=True, exist_ok=True)"""),
         code("""\
 def wrap_imputer(model):
     return Pipeline([("imputer", SimpleImputer(strategy="median")), ("model", model)])
@@ -1006,8 +1008,12 @@ def cv_evaluate(model, X, y, splitter, groups):
         code("""\
 def find_best_model(model_type):
     \"\"\"Find the best model for a type by reading test parquets and picking lowest RMSE.\"\"\"
-    import glob
     test_files = sorted(TRAINING_DIR.glob(f"model_{model_type}_*_Test.parquet"))
+    if not test_files:
+        raise FileNotFoundError(
+            f"No test parquets found for Model {model_type} in {TRAINING_DIR}. "
+            f"Run the Model {model_type} training notebook first."
+        )
     best_name, best_rmse = None, float("inf")
     for f in test_files:
         df_t = pd.read_parquet(f)
@@ -1106,22 +1112,51 @@ for name, model in candidates_d.items():
     result = cv_evaluate(model, X, y, splitter, groups)
     r1_rows.append({"model": name, **result})
 
-# Weighted average via grid search
+# Weighted average via grid search (CV fold-by-fold to match other candidates)
 best_wa_rmse = float("inf")
 best_weights = None
+best_fold_rmses = None
+best_fold_maes = None
+
+wa_pred_cols = X[["pred_A", "pred_B", "pred_C"]]
+
 for w_a in np.arange(0.0, 1.05, 0.1):
     for w_b in np.arange(0.0, 1.05 - w_a, 0.1):
         w_c = 1.0 - w_a - w_b
         if w_c < 0:
             continue
-        preds = w_a * X["pred_A"].fillna(0) + w_b * X["pred_B"].fillna(0) + w_c * X["pred_C"]
-        rmse = np.sqrt(mean_squared_error(y, preds))
-        if rmse < best_wa_rmse:
-            best_wa_rmse = rmse
-            best_weights = (round(w_a, 1), round(w_b, 1), round(w_c, 1))
+        weights = pd.Series({"pred_A": w_a, "pred_B": w_b, "pred_C": w_c})
 
-print(f"  WeightedAvg best weights: A={best_weights[0]}, B={best_weights[1]}, C={best_weights[2]}, RMSE={best_wa_rmse:.4f}")
-r1_rows.append({"model": "WeightedAvg", "mean_rmse": best_wa_rmse, "std_rmse": 0.0, "mean_mae": 0.0, "fold_rmse": [], "fold_mae": []})
+        fold_rmses = []
+        fold_maes = []
+        for tr, va in splitter.split(groups):
+            y_va = y.iloc[va]
+            avail = wa_pred_cols.iloc[va].notna()
+            weighted_sum = wa_pred_cols.iloc[va].mul(weights, axis=1).sum(axis=1, skipna=True)
+            weight_sum = avail.mul(weights, axis=1).sum(axis=1)
+            preds_va = weighted_sum.div(weight_sum.where(weight_sum > 0, np.nan))
+            valid = preds_va.notna()
+            if valid.sum() == 0:
+                continue
+            fold_rmses.append(np.sqrt(mean_squared_error(y_va[valid], preds_va[valid])))
+            fold_maes.append(mean_absolute_error(y_va[valid], preds_va[valid]))
+
+        if not fold_rmses:
+            continue
+        mean_rmse = float(np.mean(fold_rmses))
+        if mean_rmse < best_wa_rmse:
+            best_wa_rmse = mean_rmse
+            best_weights = (round(w_a, 1), round(w_b, 1), round(w_c, 1))
+            best_fold_rmses = fold_rmses
+            best_fold_maes = fold_maes
+
+print(f"  WeightedAvg best weights: A={best_weights[0]}, B={best_weights[1]}, C={best_weights[2]}, CV RMSE={best_wa_rmse:.4f}")
+r1_rows.append({
+    "model": "WeightedAvg", "mean_rmse": best_wa_rmse,
+    "std_rmse": float(np.std(best_fold_rmses)),
+    "mean_mae": float(np.mean(best_fold_maes)),
+    "fold_rmse": best_fold_rmses, "fold_mae": best_fold_maes,
+})
 
 r1_df = pd.DataFrame(r1_rows).sort_values("mean_rmse").reset_index(drop=True)
 r1_df[["model", "mean_rmse", "std_rmse"]]"""),
@@ -1265,9 +1300,14 @@ for name in top3_names:
 final_df = pd.DataFrame(final_results).sort_values("test_rmse").reset_index(drop=True)
 final_df"""),
         code("""\
-# Also evaluate the weighted average on test set
-wa_test_pred = best_weights[0] * X_test["pred_A"].fillna(0) + best_weights[1] * X_test["pred_B"].fillna(0) + best_weights[2] * X_test["pred_C"]
-wa_test_rmse = np.sqrt(mean_squared_error(y_test, wa_test_pred))
+# Also evaluate the weighted average on test set (with weight renormalization for missing preds)
+wa_weights = pd.Series({"pred_A": best_weights[0], "pred_B": best_weights[1], "pred_C": best_weights[2]})
+wa_avail = X_test[["pred_A", "pred_B", "pred_C"]].notna()
+wa_wsum = X_test[["pred_A", "pred_B", "pred_C"]].mul(wa_weights, axis=1).sum(axis=1, skipna=True)
+wa_wdenom = wa_avail.mul(wa_weights, axis=1).sum(axis=1)
+wa_test_pred = wa_wsum.div(wa_wdenom.where(wa_wdenom > 0, np.nan))
+wa_valid = wa_test_pred.notna()
+wa_test_rmse = np.sqrt(mean_squared_error(y_test[wa_valid], wa_test_pred[wa_valid]))
 print(f"WeightedAvg test RMSE: {wa_test_rmse:.4f} (weights: A={best_weights[0]}, B={best_weights[1]}, C={best_weights[2]})")"""),
         code("""\
 fig, ax = plt.subplots(figsize=(8, 4))
