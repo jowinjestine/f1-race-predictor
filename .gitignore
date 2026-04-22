@@ -30,8 +30,10 @@ htmlcov/
 # Data files
 data/raw/*
 data/processed/*
+data/training/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+!data/training/.gitkeep
 !data/processed/*/
 data/processed/*/*.parquet
 !data/processed/*/.gitkeep
