@@ -82,7 +82,14 @@ import xgboost as xgb
 import lightgbm as lgb
 
 from f1_predictor.features.splits import ExpandingWindowSplit, LeaveOneSeasonOut
-from f1_predictor.data.storage import load_from_gcs_or_local
+from f1_predictor.data.storage import (
+    load_from_gcs_or_local,
+    load_training_parquet,
+    save_training_parquet,
+    save_model_pickle as gcs_save_model_pickle,
+    save_notebook,
+    sync_training_from_gcs,
+)
 
 warnings.filterwarnings("ignore", category=UserWarning)
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -347,23 +354,22 @@ def run_optuna_round(name, X, y, splitter, groups, n_trials):
 
 SAVE_ARTIFACTS = '''\
 def save_predictions(model, X, y, id_df, model_type, model_name, split_name):
-    """Save prediction parquet for a given split."""
+    """Save prediction parquet locally and to GCS."""
     preds = model.predict(X)
     out = id_df.copy()
     out["y_true"] = y.values
     out["y_pred"] = preds
     fname = f"model_{model_type}_{model_name}_{split_name}.parquet"
-    out.to_parquet(TRAINING_DIR / fname, index=False)
-    print(f"  Saved {fname}")
+    uri = save_training_parquet(out, fname, TRAINING_DIR)
+    print(f"  Saved {fname} -> {uri}")
     return preds
 
 
-def save_model_pickle(model, model_type, model_name):
-    """Save model pickle."""
+def save_model_pkl(model, model_type, model_name):
+    """Save model pickle locally and to GCS."""
     fname = f"Model_{model_type}_{model_name}.pkl"
-    with open(MODEL_DIR / fname, "wb") as f:
-        pickle.dump(model, f)
-    print(f"  Saved {fname}")'''
+    uri = gcs_save_model_pickle(model, fname, MODEL_DIR)
+    print(f"  Saved {fname} -> {uri}")'''
 
 
 # ---------------------------------------------------------------------------
@@ -537,10 +543,10 @@ for name in top5_names:
     val_out["y_true"] = y.loc[val_mask].values
     val_out["y_pred"] = oof_preds[val_mask]
     fname = f"model_A_{name}_Validation.parquet"
-    val_out.to_parquet(TRAINING_DIR / fname, index=False)
-    print(f"  Saved {fname}")
+    uri = save_training_parquet(val_out, fname, TRAINING_DIR)
+    print(f"  Saved {fname} -> {uri}")
 
-    save_model_pickle(model, "A", name)
+    save_model_pkl(model, "A", name)
 
 print("\\nDone! All Model A artifacts saved.")"""),
         md("## Summary"),
@@ -729,10 +735,10 @@ for name in top5_names:
     val_out["y_true"] = y.loc[val_mask].values
     val_out["y_pred"] = oof_preds[val_mask]
     fname = f"model_B_{name}_Validation.parquet"
-    val_out.to_parquet(TRAINING_DIR / fname, index=False)
-    print(f"  Saved {fname}")
+    uri = save_training_parquet(val_out, fname, TRAINING_DIR)
+    print(f"  Saved {fname} -> {uri}")
 
-    save_model_pickle(model, "B", name)
+    save_model_pkl(model, "B", name)
 
 print("\\nDone! All Model B artifacts saved.")"""),
         md("## Summary"),
@@ -923,10 +929,10 @@ for name in top5_names:
     val_out["y_true"] = y.loc[val_mask].values
     val_out["y_pred"] = oof_preds[val_mask]
     fname = f"model_C_{name}_Validation.parquet"
-    val_out.to_parquet(TRAINING_DIR / fname, index=False)
-    print(f"  Saved {fname}")
+    uri = save_training_parquet(val_out, fname, TRAINING_DIR)
+    print(f"  Saved {fname} -> {uri}")
 
-    save_model_pickle(model, "C", name)
+    save_model_pkl(model, "C", name)
 
 print("\\nDone! All Model C artifacts saved.")"""),
         md("## Summary"),
@@ -974,6 +980,12 @@ import xgboost as xgb
 import lightgbm as lgb
 
 from f1_predictor.features.splits import LeaveOneSeasonOut
+from f1_predictor.data.storage import (
+    load_training_parquet,
+    save_training_parquet,
+    save_model_pickle as gcs_save_model_pickle,
+    sync_training_from_gcs,
+)
 
 warnings.filterwarnings("ignore", category=UserWarning)
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -981,7 +993,12 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 TRAINING_DIR = Path("data/training")
 MODEL_DIR = Path("data/raw/model")
 TRAINING_DIR.mkdir(parents=True, exist_ok=True)
-MODEL_DIR.mkdir(parents=True, exist_ok=True)"""),
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+# Sync base model artifacts from GCS
+for mt in ["A", "B", "C"]:
+    sync_training_from_gcs(mt, TRAINING_DIR)
+print("Synced base model artifacts from GCS.")"""),
         code("""\
 def wrap_imputer(model):
     return Pipeline([("imputer", SimpleImputer(strategy="median")), ("model", model)])
@@ -1035,10 +1052,10 @@ def aggregate_lap_to_race(val_df):
     last_laps = val_df.groupby(["season", "round", "driver_abbrev"]).tail(1)
     return last_laps[["season", "round", "driver_abbrev", "y_true", "y_pred"]].copy()
 
-# Load OOF validation predictions
-val_A = pd.read_parquet(TRAINING_DIR / f"model_A_{best_A}_Validation.parquet")
-val_B = pd.read_parquet(TRAINING_DIR / f"model_B_{best_B}_Validation.parquet")
-val_C = pd.read_parquet(TRAINING_DIR / f"model_C_{best_C}_Validation.parquet")
+# Load OOF validation predictions (GCS with local fallback)
+val_A = load_training_parquet(f"model_A_{best_A}_Validation.parquet", TRAINING_DIR)
+val_B = load_training_parquet(f"model_B_{best_B}_Validation.parquet", TRAINING_DIR)
+val_C = load_training_parquet(f"model_C_{best_C}_Validation.parquet", TRAINING_DIR)
 
 # Aggregate A and B to race level
 race_A = aggregate_lap_to_race(val_A).rename(columns={"y_pred": "pred_A", "y_true": "true_A"})
@@ -1341,14 +1358,13 @@ for name in top3_names:
         out["y_true"] = y_s.values
         out["y_pred"] = model.predict(X_s)
         fname = f"model_D_{name}_{split_name}.parquet"
-        out.to_parquet(TRAINING_DIR / fname, index=False)
-        print(f"  Saved {fname}")
+        uri = save_training_parquet(out, fname, TRAINING_DIR)
+        print(f"  Saved {fname} -> {uri}")
 
     # Save pickle
     pkl_name = f"Model_D_{name}.pkl"
-    with open(MODEL_DIR / pkl_name, "wb") as f:
-        pickle.dump(model, f)
-    print(f"  Saved {pkl_name}")
+    uri = gcs_save_model_pickle(model, pkl_name, MODEL_DIR)
+    print(f"  Saved {pkl_name} -> {uri}")
 
 print("\\nDone! All Model D artifacts saved.")"""),
         md("## Summary"),
@@ -1406,10 +1422,18 @@ from sklearn.metrics import (
     r2_score,
 )
 
+from f1_predictor.data.storage import sync_training_from_gcs
+
 warnings.filterwarnings("ignore", category=UserWarning)
 matplotlib.rcParams.update({"figure.dpi": 110, "figure.facecolor": "white"})
 
-TRAINING_DIR = Path("data/training")"""),
+TRAINING_DIR = Path("data/training")
+TRAINING_DIR.mkdir(parents=True, exist_ok=True)
+
+# Sync all model artifacts from GCS
+for mt in ["A", "B", "C", "D"]:
+    sync_training_from_gcs(mt, TRAINING_DIR)
+print("Synced all training artifacts from GCS.")"""),
         md("## 1. Load All Prediction Parquets"),
         code("""\
 records = []
