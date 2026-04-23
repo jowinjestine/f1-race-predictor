@@ -69,3 +69,7 @@ mlartifacts/
 
 # FastF1 cache
 .fastf1_cache/
+
+# Graphify temp files
+.graphify_*
+graphify-out/cache/
