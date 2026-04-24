@@ -170,9 +170,7 @@ def save_model_pickle(
         return str(local_path)
 
 
-def save_notebook(
-    local_path: Path, notebook_name: str
-) -> str:  # pragma: no cover
+def save_notebook(local_path: Path, notebook_name: str) -> str:  # pragma: no cover
     """Upload an executed notebook to GCS."""
     try:
         return upload_blob(local_path, f"data/notebooks/{notebook_name}")
@@ -181,9 +179,7 @@ def save_notebook(
         return str(local_path)
 
 
-def load_training_parquet(
-    filename: str, local_dir: Path | None = None
-) -> pd.DataFrame:
+def load_training_parquet(filename: str, local_dir: Path | None = None) -> pd.DataFrame:
     """Load a training parquet from GCS, falling back to local."""
     local_dir = local_dir or Path("data/training")
     blob_name = f"data/training/{filename}"
