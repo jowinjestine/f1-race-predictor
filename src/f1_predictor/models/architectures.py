@@ -185,9 +185,8 @@ class FTTransformerWrapper(BaseEstimator, RegressorMixin):  # type: ignore[misc]
                 residual_dropout=0.0,
                 linformer_compression_ratio=None,
                 linformer_sharing_policy=None,
-                n_tokens=None,
             )
-        except (ImportError, TypeError):
+        except (ImportError, TypeError, ValueError):
             return _MLPNet(n_features, self.d_token * 2, self.d_token, self.ffn_dropout)
 
     def fit(self, X: Any, y: Any) -> FTTransformerWrapper:

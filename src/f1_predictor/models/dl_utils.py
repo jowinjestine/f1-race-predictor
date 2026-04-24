@@ -32,7 +32,7 @@ def auto_batch_size(n_features: int, default: int = 1024) -> int:
     if not TORCH_AVAILABLE or not torch.cuda.is_available():
         return min(default, 512)
     try:
-        vram_gb = torch.cuda.get_device_properties(0).total_mem / 1024**3
+        vram_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
         if vram_gb >= 16:
             return 2048
         if vram_gb >= 8:

@@ -6,6 +6,32 @@ import shutil
 import subprocess
 
 
+def _rocminfo_gpu_name() -> str | None:
+    """Parse `rocminfo` for the first GPU agent's Marketing Name. Works on WSL."""
+    if not shutil.which("rocminfo"):
+        return None
+    try:
+        result = subprocess.run(
+            ["rocminfo"], capture_output=True, text=True, timeout=10
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    # In each Agent block, "Marketing Name:" appears before "Device Type:".
+    # Hold the last seen name and commit it when we confirm Device Type is GPU.
+    pending_name: str | None = None
+    for raw in result.stdout.splitlines():
+        line = raw.strip()
+        if line.startswith("Agent "):
+            pending_name = None
+        elif line.startswith("Marketing Name:"):
+            pending_name = line.split(":", 1)[1].strip() or None
+        elif line.startswith("Device Type:") and "GPU" in line and pending_name:
+            return pending_name
+    return None
+
+
 def detect_gpu_backend() -> tuple[str, str | None]:
     """Detect GPU vendor. Returns (backend, device_name).
 
@@ -19,14 +45,20 @@ def detect_gpu_backend() -> tuple[str, str | None]:
                 text=True,
                 timeout=10,
             )
+            # rocm-smi exits 0 on WSL even when it fails (errors go to stderr);
+            # treat empty/unparseable stdout as "no answer" and try rocminfo next.
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
                     line = line.strip()
                     if line and not line.startswith("=") and "GPU" not in line.upper().split()[0:1]:
                         return "rocm", line
-                return "rocm", "AMD GPU"
         except (subprocess.TimeoutExpired, OSError):
             pass
+
+    # WSL path: rocm-smi can't read /sys/module/amdgpu; rocminfo uses /dev/dxg.
+    rocm_name = _rocminfo_gpu_name()
+    if rocm_name:
+        return "rocm", rocm_name
 
     if shutil.which("nvidia-smi"):
         try:
@@ -86,7 +118,7 @@ def get_device_summary() -> dict[str, object]:
 
         if torch.cuda.is_available():
             props = torch.cuda.get_device_properties(0)
-            summary["vram_gb"] = round(props.total_mem / 1024**3, 1)
+            summary["vram_gb"] = round(props.total_memory / 1024**3, 1)
             summary["torch_gpu_name"] = props.name
     except (ImportError, RuntimeError):
         pass

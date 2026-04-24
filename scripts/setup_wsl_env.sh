@@ -65,17 +65,18 @@ uv sync --frozen --group dev --extra training --extra notebooks --extra dl
 # ---------------------------------------------------------------
 echo ""
 echo ">>> Installing PyTorch..."
+# --reinstall so we override any torch that uv sync pulled in (e.g. CUDA build from PyPI).
 if [ "$GPU_BACKEND" = "rocm" ]; then
     TORCH_INDEX="https://download.pytorch.org/whl/rocm${ROCM_VER:-6.2}"
     echo "    Using ROCm index: $TORCH_INDEX"
-    uv pip install torch --index-url "$TORCH_INDEX"
+    uv pip install --reinstall torch --index-url "$TORCH_INDEX"
 elif [ "$GPU_BACKEND" = "cuda" ]; then
     echo "    Using default PyPI (CUDA)"
-    uv pip install torch
+    uv pip install --reinstall torch
 else
     TORCH_INDEX="https://download.pytorch.org/whl/cpu"
     echo "    Using CPU-only index: $TORCH_INDEX"
-    uv pip install torch --index-url "$TORCH_INDEX"
+    uv pip install --reinstall torch --index-url "$TORCH_INDEX"
 fi
 
 # ---------------------------------------------------------------
@@ -119,6 +120,13 @@ fi
 # ---------------------------------------------------------------
 echo ""
 echo ">>> Validating installation..."
+# WSL+ROCm: preload WSL-aware libhsa so torch.cuda sees the GPU during validation.
+if [ "$GPU_BACKEND" = "rocm" ] && grep -qi microsoft /proc/version 2>/dev/null; then
+    for _hsa in /opt/rocm-*/lib/libhsa-runtime64.so.1; do
+        [ -e "$_hsa" ] && export LD_PRELOAD="$_hsa${LD_PRELOAD:+:$LD_PRELOAD}" && break
+    done
+    unset _hsa
+fi
 uv run python -c "
 import sys
 print(f'Python: {sys.version}')
@@ -129,7 +137,7 @@ try:
     if torch.cuda.is_available():
         print(f'  GPU: {torch.cuda.get_device_name(0)}')
         props = torch.cuda.get_device_properties(0)
-        print(f'  VRAM: {props.total_mem / 1024**3:.1f} GB')
+        print(f'  VRAM: {props.total_memory / 1024**3:.1f} GB')
     else:
         print('  GPU: not available (CPU only)')
 except ImportError:

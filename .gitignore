@@ -73,3 +73,9 @@ mlartifacts/
 # Graphify temp files
 .graphify_*
 graphify-out/cache/
+
+# Claude Code local state
+.claude/
+
+# Local training logs
+logs/

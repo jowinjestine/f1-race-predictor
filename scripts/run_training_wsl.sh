@@ -6,6 +6,16 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# On WSL + ROCm, PyTorch's bundled libhsa-runtime64.so is the native-Linux build
+# and cannot talk to /dev/dxg. Preload the WSL-aware system lib from the
+# hsa-runtime-rocr4wsl-amdgpu package so torch.cuda sees the GPU.
+if grep -qi microsoft /proc/version 2>/dev/null; then
+    for _hsa in /opt/rocm-*/lib/libhsa-runtime64.so.1; do
+        [ -e "$_hsa" ] && export LD_PRELOAD="$_hsa${LD_PRELOAD:+:$LD_PRELOAD}" && break
+    done
+    unset _hsa
+fi
+
 TIMEOUT_AB=7200   # 2 hours for lap-level models
 TIMEOUT_CD=3600   # 1 hour for race-level / stacking
 TIMEOUT_CMP=1800  # 30 min for comparison
