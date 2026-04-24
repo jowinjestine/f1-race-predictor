@@ -81,6 +81,19 @@ f1-race-predictor/
 └── pyproject.toml     # Project configuration
 ```
 
+## GPU Training (WSL2 / ROCm)
+
+```bash
+# One-time setup (auto-detects AMD ROCm or NVIDIA CUDA)
+bash scripts/setup_wsl_env.sh
+
+# Run full training pipeline (all 4 models + comparison)
+bash scripts/run_training_wsl.sh
+```
+
+Also supports NVIDIA CUDA — the setup script auto-detects the GPU vendor.
+See [docs/GPU_DL_PLAN.md](docs/GPU_DL_PLAN.md) for architecture details.
+
 ## Development
 
 ### Commits

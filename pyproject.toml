@@ -39,6 +39,9 @@ training = [
     "lightgbm>=4.0",
     "optuna>=3.6",
 ]
+dl = [
+    "rtdl-revisiting-models>=0.0.2",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -83,6 +86,14 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["google.cloud.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["torch", "torch.*", "rtdl_revisiting_models", "rtdl_revisiting_models.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["sklearn.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

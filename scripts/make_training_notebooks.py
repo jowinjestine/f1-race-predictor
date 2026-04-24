@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001  — notebook display strings use Unicode
 """Generate training notebooks for Models A, B, C, D."""
 
 import json
@@ -90,6 +91,9 @@ from f1_predictor.data.storage import (
     save_notebook,
     sync_training_from_gcs,
 )
+from f1_predictor.models.gpu import (
+    detect_gpu_backend, get_lightgbm_device, get_torch_device, get_xgboost_device,
+)
 
 warnings.filterwarnings("ignore", category=UserWarning)
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -99,73 +103,120 @@ MODEL_DIR = Path("data/raw/model")
 TRAINING_DIR.mkdir(parents=True, exist_ok=True)
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-# GPU detection
-try:
-    import subprocess as _sp
-    GPU_AVAILABLE = _sp.run(["nvidia-smi"], capture_output=True).returncode == 0
-except FileNotFoundError:
-    GPU_AVAILABLE = False
-print(f"GPU available: {GPU_AVAILABLE}")
+# GPU detection (supports NVIDIA CUDA and AMD ROCm)
+GPU_BACKEND, GPU_NAME = detect_gpu_backend()
+TORCH_DEVICE = get_torch_device()
+print(f"GPU backend: {GPU_BACKEND} ({GPU_NAME})")
+print(f"PyTorch device: {TORCH_DEVICE}")
 
-# cuML GPU models (RAPIDS) — optional, fall back to sklearn if not available
-CUML_AVAILABLE = False
+# Deep learning models (PyTorch — works on both CUDA and ROCm via HIP)
+DL_AVAILABLE = False
 try:
-    from cuml.ensemble import RandomForestRegressor as cuRF
-    from cuml.linear_model import Ridge as cuRidge, Lasso as cuLasso, ElasticNet as cuElasticNet
-    CUML_AVAILABLE = True
-    print("cuML available: True")
+    from f1_predictor.models.architectures import GRU2Layer, FTTransformerWrapper, MLP3Layer
+    DL_AVAILABLE = TORCH_DEVICE != "cpu"
+    print(f"DL models available: {DL_AVAILABLE}")
 except ImportError:
-    print("cuML not available — using XGBoost/LightGBM variants only")"""
+    print("DL models not available (torch/rtdl not installed)")"""
 
 HELPERS = '''\
 NAN_TOLERANT = {
     "XGBoost", "XGBoost_DART", "XGBoost_Linear",
     "LightGBM", "LightGBM_DART", "LightGBM_GOSS",
+    "XGBoost_Conservative", "XGBoost_Deep",
+    "LightGBM_Shallow", "LightGBM_Deep",
 }
+
+DL_SKIP_OPTUNA = {"GRU_2layer", "FT_Transformer", "MLP_3layer"}
 
 
 def get_candidates():
-    """Return dict of model_name -> model instance. All GPU-accelerated."""
-    xgb_device = {"device": "cuda"} if GPU_AVAILABLE else {}
-    lgb_device = {"device": "gpu"} if GPU_AVAILABLE else {}
+    """Return dict of model_name -> model instance. GPU-accelerated where possible."""
+    xgb_device = get_xgboost_device(GPU_BACKEND)
+    lgb_device = get_lightgbm_device(GPU_BACKEND)
 
     candidates = {
-        # XGBoost variants — all use device="cuda"
+        # XGBoost variants (GPU on CUDA, CPU on ROCm)
         "XGBoost": xgb.XGBRegressor(
             n_estimators=300, n_jobs=-1, random_state=42, verbosity=0, **xgb_device),
         "XGBoost_DART": xgb.XGBRegressor(
-            n_estimators=300, booster="dart", n_jobs=-1, random_state=42, verbosity=0, **xgb_device),
+            n_estimators=300, booster="dart", n_jobs=-1,
+            random_state=42, verbosity=0, **xgb_device),
         "XGBoost_Linear": xgb.XGBRegressor(
-            n_estimators=300, booster="gblinear", n_jobs=-1, random_state=42, verbosity=0, **xgb_device),
-        # LightGBM variants — all use device="gpu"
+            n_estimators=300, booster="gblinear", n_jobs=-1,
+            random_state=42, verbosity=0, **xgb_device),
+        # LightGBM variants (GPU via OpenCL on both CUDA and ROCm)
         "LightGBM": lgb.LGBMRegressor(
             n_estimators=300, n_jobs=-1, random_state=42, verbose=-1, **lgb_device),
         "LightGBM_DART": lgb.LGBMRegressor(
-            n_estimators=300, boosting_type="dart", n_jobs=-1, random_state=42, verbose=-1, **lgb_device),
+            n_estimators=300, boosting_type="dart", n_jobs=-1,
+            random_state=42, verbose=-1, **lgb_device),
         "LightGBM_GOSS": lgb.LGBMRegressor(
-            n_estimators=300, boosting_type="goss", n_jobs=-1, random_state=42, verbose=-1, **lgb_device),
+            n_estimators=300, boosting_type="goss", n_jobs=-1,
+            random_state=42, verbose=-1, **lgb_device),
+        # Extra tree-based variants
+        "XGBoost_Conservative": xgb.XGBRegressor(
+            n_estimators=300, max_depth=4, learning_rate=0.05,
+            n_jobs=-1, random_state=42, verbosity=0, **xgb_device),
+        "LightGBM_Shallow": lgb.LGBMRegressor(
+            n_estimators=300, max_depth=4, learning_rate=0.05,
+            n_jobs=-1, random_state=42, verbose=-1, **lgb_device),
+        "XGBoost_Deep": xgb.XGBRegressor(
+            n_estimators=300, max_depth=10, learning_rate=0.1,
+            n_jobs=-1, random_state=42, verbosity=0, **xgb_device),
+        "LightGBM_Deep": lgb.LGBMRegressor(
+            n_estimators=300, max_depth=10, learning_rate=0.1,
+            n_jobs=-1, random_state=42, verbose=-1, **lgb_device),
     }
 
-    # cuML GPU models — sklearn-compatible API, runs on CUDA
-    if CUML_AVAILABLE:
-        candidates["cuML_RF"] = cuRF(n_estimators=300, random_state=42)
-        candidates["cuML_Ridge"] = cuRidge()
-        candidates["cuML_Lasso"] = cuLasso()
-        candidates["cuML_ElasticNet"] = cuElasticNet()
-    else:
-        # Fallback: more XGBoost/LightGBM variants to keep 10 candidates
-        candidates["XGBoost_Conservative"] = xgb.XGBRegressor(
+    # Deep learning candidates (PyTorch — works on both CUDA and ROCm via HIP)
+    if DL_AVAILABLE:
+        n_feat = len(FEATURE_COLS)
+        candidates["GRU_2layer"] = GRU2Layer(input_dim=n_feat)
+        candidates["FT_Transformer"] = FTTransformerWrapper(n_features=n_feat)
+
+    print(f"Candidates ({len(candidates)}): {list(candidates.keys())}")
+    return candidates
+
+
+def get_candidates_c():
+    """Return dict of candidates for Model C (race-level, includes MLP)."""
+    xgb_device = get_xgboost_device(GPU_BACKEND)
+    lgb_device = get_lightgbm_device(GPU_BACKEND)
+
+    candidates = {
+        "XGBoost": xgb.XGBRegressor(
+            n_estimators=300, n_jobs=-1, random_state=42, verbosity=0, **xgb_device),
+        "XGBoost_DART": xgb.XGBRegressor(
+            n_estimators=300, booster="dart", n_jobs=-1,
+            random_state=42, verbosity=0, **xgb_device),
+        "XGBoost_Linear": xgb.XGBRegressor(
+            n_estimators=300, booster="gblinear", n_jobs=-1,
+            random_state=42, verbosity=0, **xgb_device),
+        "LightGBM": lgb.LGBMRegressor(
+            n_estimators=300, n_jobs=-1, random_state=42, verbose=-1, **lgb_device),
+        "LightGBM_DART": lgb.LGBMRegressor(
+            n_estimators=300, boosting_type="dart", n_jobs=-1,
+            random_state=42, verbose=-1, **lgb_device),
+        "LightGBM_GOSS": lgb.LGBMRegressor(
+            n_estimators=300, boosting_type="goss", n_jobs=-1,
+            random_state=42, verbose=-1, **lgb_device),
+        "XGBoost_Conservative": xgb.XGBRegressor(
             n_estimators=300, max_depth=4, learning_rate=0.05,
-            n_jobs=-1, random_state=42, verbosity=0, **xgb_device)
-        candidates["LightGBM_Shallow"] = lgb.LGBMRegressor(
+            n_jobs=-1, random_state=42, verbosity=0, **xgb_device),
+        "LightGBM_Shallow": lgb.LGBMRegressor(
             n_estimators=300, max_depth=4, learning_rate=0.05,
-            n_jobs=-1, random_state=42, verbose=-1, **lgb_device)
-        candidates["XGBoost_Deep"] = xgb.XGBRegressor(
+            n_jobs=-1, random_state=42, verbose=-1, **lgb_device),
+        "XGBoost_Deep": xgb.XGBRegressor(
             n_estimators=300, max_depth=10, learning_rate=0.1,
-            n_jobs=-1, random_state=42, verbosity=0, **xgb_device)
-        candidates["LightGBM_Deep"] = lgb.LGBMRegressor(
+            n_jobs=-1, random_state=42, verbosity=0, **xgb_device),
+        "LightGBM_Deep": lgb.LGBMRegressor(
             n_estimators=300, max_depth=10, learning_rate=0.1,
-            n_jobs=-1, random_state=42, verbose=-1, **lgb_device)
+            n_jobs=-1, random_state=42, verbose=-1, **lgb_device),
+    }
+
+    if DL_AVAILABLE:
+        n_feat = len(FEATURE_COLS)
+        candidates["MLP_3layer"] = MLP3Layer(input_dim=n_feat)
 
     print(f"Candidates ({len(candidates)}): {list(candidates.keys())}")
     return candidates
@@ -226,9 +277,9 @@ def _lgb_base_space(trial):
     )
 
 def get_optuna_param_space(name, trial):
-    """Return HP dict for a given model name and Optuna trial. All GPU-enabled."""
-    xgb_device = {"device": "cuda"} if GPU_AVAILABLE else {}
-    lgb_device = {"device": "gpu"} if GPU_AVAILABLE else {}
+    """Return HP dict for a given model name and Optuna trial."""
+    xgb_device = get_xgboost_device(GPU_BACKEND)
+    lgb_device = get_lightgbm_device(GPU_BACKEND)
 
     if name == "XGBoost":
         params = _xgb_base_space(trial)
@@ -263,29 +314,13 @@ def get_optuna_param_space(name, trial):
         return params
     elif name == "LightGBM_GOSS":
         params = _lgb_base_space(trial)
-        params.pop("subsample", None)  # GOSS doesn't use subsample
+        params.pop("subsample", None)
         params.update(boosting_type="goss", n_jobs=-1, random_state=42, verbose=-1, **lgb_device)
         return params
     elif name in ("LightGBM_Shallow", "LightGBM_Deep"):
         params = _lgb_base_space(trial)
         params.update(n_jobs=-1, random_state=42, verbose=-1, **lgb_device)
         return params
-    elif name == "cuML_RF":
-        return dict(
-            n_estimators=trial.suggest_int("n_estimators", 100, 1500),
-            max_depth=trial.suggest_int("max_depth", 3, 15),
-            max_features=trial.suggest_float("max_features", 0.3, 1.0),
-            random_state=42,
-        )
-    elif name == "cuML_Ridge":
-        return dict(alpha=trial.suggest_float("alpha", 0.001, 100.0, log=True))
-    elif name == "cuML_Lasso":
-        return dict(alpha=trial.suggest_float("alpha", 0.001, 100.0, log=True))
-    elif name == "cuML_ElasticNet":
-        return dict(
-            alpha=trial.suggest_float("alpha", 0.001, 100.0, log=True),
-            l1_ratio=trial.suggest_float("l1_ratio", 0.1, 0.9),
-        )
     return {}
 
 
@@ -301,20 +336,19 @@ MODEL_CLASSES = {
     "LightGBM_Shallow": lgb.LGBMRegressor,
     "LightGBM_Deep": lgb.LGBMRegressor,
 }
-if CUML_AVAILABLE:
+if DL_AVAILABLE:
     MODEL_CLASSES.update({
-        "cuML_RF": cuRF,
-        "cuML_Ridge": cuRidge,
-        "cuML_Lasso": cuLasso,
-        "cuML_ElasticNet": cuElasticNet,
+        "GRU_2layer": GRU2Layer,
+        "FT_Transformer": FTTransformerWrapper,
+        "MLP_3layer": MLP3Layer,
     })
 
 
 def reconstruct_params(name, best_params):
     """Translate flat Optuna best_params back to model constructor args."""
     params = dict(best_params)
-    xgb_device = {"device": "cuda"} if GPU_AVAILABLE else {}
-    lgb_device = {"device": "gpu"} if GPU_AVAILABLE else {}
+    xgb_device = get_xgboost_device(GPU_BACKEND)
+    lgb_device = get_lightgbm_device(GPU_BACKEND)
 
     if name == "XGBoost":
         params.update(n_jobs=-1, random_state=42, verbosity=0, **xgb_device)
@@ -333,14 +367,16 @@ def reconstruct_params(name, best_params):
         params.update(boosting_type="goss", n_jobs=-1, random_state=42, verbose=-1, **lgb_device)
     elif name in ("LightGBM_Shallow", "LightGBM_Deep"):
         params.update(n_jobs=-1, random_state=42, verbose=-1, **lgb_device)
-    elif name == "cuML_RF":
-        params["random_state"] = 42
-    # cuML_Ridge, cuML_Lasso, cuML_ElasticNet — no extra params needed
     return params
 
 
 def run_optuna_round(name, X, y, splitter, groups, n_trials):
-    """Run Optuna study for a single model. Returns best params and best RMSE."""
+    """Run Optuna study for a single model. Returns best params and best RMSE.
+    DL models skip Optuna (fixed HPs) — returns empty params and screening RMSE."""
+    if name in DL_SKIP_OPTUNA:
+        result = cv_evaluate(MODEL_CLASSES[name](), X, y, splitter, groups)
+        return {}, result["mean_rmse"]
+
     def objective(trial):
         params = get_optuna_param_space(name, trial)
         model_cls = MODEL_CLASSES[name]
@@ -420,7 +456,7 @@ for i, (tr, va) in enumerate(splitter.split(groups)):
     va_seasons = sorted(set(groups[va]))
     print(f"  Fold {i}: train seasons={tr_seasons}, val seasons={va_seasons}, "
           f"train={len(tr):,}, val={len(va):,}")"""),
-        md("## 3. Round 1 — Screen 10 Models (default params)"),
+        md("## 3. Round 1 — Screen Models (default params)"),
         code("""\
 candidates = get_candidates()
 r1_results = screen_models(candidates, X, y, splitter, groups)
@@ -436,7 +472,7 @@ plt.show()"""),
         code("""\
 top7_names = r1_results["model"].head(7).tolist()
 print(f"Advancing to Round 2: {top7_names}")
-eliminated = r1_results["model"].tail(3).tolist()
+eliminated = r1_results["model"].iloc[7:].tolist()
 print(f"Eliminated: {eliminated}")"""),
         md("## 4. Round 2 — Optuna HP Tuning (top 7, 10 trials each)"),
         code("""\
@@ -477,9 +513,13 @@ print(f"Test season(s): {sorted(df['season'].iloc[test_idx].unique())}")"""),
         code("""\
 final_results = []
 for name in top5_names:
-    params = reconstruct_params(name, r3_best_params[name])
-    model_cls = MODEL_CLASSES[name]
-    model = model_cls(**params)
+    if name in DL_SKIP_OPTUNA:
+        model_cls = MODEL_CLASSES[name]
+        model = model_cls(input_dim=len(FEATURE_COLS))
+    else:
+        params = reconstruct_params(name, r3_best_params[name])
+        model_cls = MODEL_CLASSES[name]
+        model = model_cls(**params)
     model.fit(X_train_full, y_train_full)
 
     train_preds = model.predict(X_train_full)
@@ -522,9 +562,13 @@ plt.show()"""),
         md("## 7. Save Artifacts"),
         code("""\
 for name in top5_names:
-    params = reconstruct_params(name, r3_best_params[name])
-    model_cls = MODEL_CLASSES[name]
-    model = model_cls(**params)
+    if name in DL_SKIP_OPTUNA:
+        model_cls = MODEL_CLASSES[name]
+        model = model_cls(input_dim=len(FEATURE_COLS))
+    else:
+        params = reconstruct_params(name, r3_best_params[name])
+        model_cls = MODEL_CLASSES[name]
+        model = model_cls(**params)
     model.fit(X_train_full, y_train_full)
 
     save_predictions(model, X_train_full, y_train_full, id_train, "A", name, "Training")
@@ -612,7 +656,7 @@ for i, (tr, va) in enumerate(splitter.split(groups)):
     va_seasons = sorted(set(groups[va]))
     print(f"  Fold {i}: train seasons={tr_seasons}, val season={va_seasons}, "
           f"train={len(tr):,}, val={len(va):,}")"""),
-        md("## 3. Round 1 — Screen 10 Models (default params)"),
+        md("## 3. Round 1 — Screen Models (default params)"),
         code("""\
 candidates = get_candidates()
 r1_results = screen_models(candidates, X, y, splitter, groups)
@@ -628,7 +672,7 @@ plt.show()"""),
         code("""\
 top7_names = r1_results["model"].head(7).tolist()
 print(f"Advancing to Round 2: {top7_names}")
-eliminated = r1_results["model"].tail(3).tolist()
+eliminated = r1_results["model"].iloc[7:].tolist()
 print(f"Eliminated: {eliminated}")"""),
         md("## 4. Round 2 — Optuna HP Tuning (top 7, 10 trials each)"),
         code("""\
@@ -669,9 +713,13 @@ print(f"Test season(s): {sorted(df['season'].iloc[test_idx].unique())}")"""),
         code("""\
 final_results = []
 for name in top5_names:
-    params = reconstruct_params(name, r3_best_params[name])
-    model_cls = MODEL_CLASSES[name]
-    model = model_cls(**params)
+    if name in DL_SKIP_OPTUNA:
+        model_cls = MODEL_CLASSES[name]
+        model = model_cls(input_dim=len(FEATURE_COLS))
+    else:
+        params = reconstruct_params(name, r3_best_params[name])
+        model_cls = MODEL_CLASSES[name]
+        model = model_cls(**params)
     model.fit(X_train_full, y_train_full)
 
     train_preds = model.predict(X_train_full)
@@ -714,9 +762,13 @@ plt.show()"""),
         md("## 7. Save Artifacts"),
         code("""\
 for name in top5_names:
-    params = reconstruct_params(name, r3_best_params[name])
-    model_cls = MODEL_CLASSES[name]
-    model = model_cls(**params)
+    if name in DL_SKIP_OPTUNA:
+        model_cls = MODEL_CLASSES[name]
+        model = model_cls(input_dim=len(FEATURE_COLS))
+    else:
+        params = reconstruct_params(name, r3_best_params[name])
+        model_cls = MODEL_CLASSES[name]
+        model = model_cls(**params)
     model.fit(X_train_full, y_train_full)
 
     save_predictions(model, X_train_full, y_train_full, id_train, "B", name, "Training")
@@ -806,9 +858,9 @@ for i, (tr, va) in enumerate(splitter.split(groups)):
     va_seasons = sorted(set(groups[va]))
     print(f"  Fold {i}: train seasons={tr_seasons}, val season={va_seasons}, "
           f"train={len(tr):,}, val={len(va):,}")"""),
-        md("## 3. Round 1 — Screen 10 Models (default params)"),
+        md("## 3. Round 1 — Screen Models (default params)"),
         code("""\
-candidates = get_candidates()
+candidates = get_candidates_c()
 r1_results = screen_models(candidates, X, y, splitter, groups)
 r1_results[["model", "mean_rmse", "std_rmse", "mean_mae"]]"""),
         code("""\
@@ -822,7 +874,7 @@ plt.show()"""),
         code("""\
 top7_names = r1_results["model"].head(7).tolist()
 print(f"Advancing to Round 2: {top7_names}")
-eliminated = r1_results["model"].tail(3).tolist()
+eliminated = r1_results["model"].iloc[7:].tolist()
 print(f"Eliminated: {eliminated}")"""),
         md("## 4. Round 2 — Optuna HP Tuning (top 7, 10 trials each)"),
         code("""\
@@ -863,9 +915,13 @@ print(f"Test season(s): {sorted(df['season'].iloc[test_idx].unique())}")"""),
         code("""\
 final_results = []
 for name in top5_names:
-    params = reconstruct_params(name, r3_best_params[name])
-    model_cls = MODEL_CLASSES[name]
-    model = model_cls(**params)
+    if name in DL_SKIP_OPTUNA:
+        model_cls = MODEL_CLASSES[name]
+        model = model_cls(input_dim=len(FEATURE_COLS))
+    else:
+        params = reconstruct_params(name, r3_best_params[name])
+        model_cls = MODEL_CLASSES[name]
+        model = model_cls(**params)
     model.fit(X_train_full, y_train_full)
 
     train_preds = model.predict(X_train_full)
@@ -908,9 +964,13 @@ plt.show()"""),
         md("## 7. Save Artifacts"),
         code("""\
 for name in top5_names:
-    params = reconstruct_params(name, r3_best_params[name])
-    model_cls = MODEL_CLASSES[name]
-    model = model_cls(**params)
+    if name in DL_SKIP_OPTUNA:
+        model_cls = MODEL_CLASSES[name]
+        model = model_cls(input_dim=len(FEATURE_COLS))
+    else:
+        params = reconstruct_params(name, r3_best_params[name])
+        model_cls = MODEL_CLASSES[name]
+        model = model_cls(**params)
     model.fit(X_train_full, y_train_full)
 
     save_predictions(model, X_train_full, y_train_full, id_train, "C", name, "Training")
@@ -956,13 +1016,16 @@ print(f"  Models: {MODEL_DIR}")"""),
 
 def make_model_d() -> list[dict]:
     cells = [
-        md("# 05d — Model D Training: Stacking Meta-Model\n\n"
-           "Combines race-level predictions from Models A, B, C into a single ensemble.\n"
-           "Uses out-of-fold (OOF) predictions as meta-features to prevent leakage.\n"
-           "CV: LeaveOneSeasonOut (test season = 2023, last season with OOF from all models)."),
+        md("# 05d — Model D Training: All-Combinations Stacking\n\n"
+           "Combines race-level predictions from **all** variants of Models A, B, C\n"
+           "into stacking ensembles. Two-phase approach:\n"
+           "- **Phase 1:** RidgeCV screen of all A x B x C combinations\n"
+           "- **Phase 2:** Full tournament on top 20 combinations\n\n"
+           "Uses out-of-fold (OOF) predictions as meta-features to prevent leakage."),
         md("## 0. Setup"),
         code(CHDIR),
         code("""\
+import itertools
 import pickle
 import warnings
 from pathlib import Path
@@ -971,7 +1034,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import optuna
-from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import ElasticNetCV, LassoCV, RidgeCV
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.pipeline import Pipeline
@@ -1019,32 +1081,26 @@ def cv_evaluate(model, X, y, splitter, groups):
         "mean_rmse": np.mean(fold_rmse), "std_rmse": np.std(fold_rmse),
         "mean_mae": np.mean(fold_mae),
     }"""),
-        md("## 1. Load OOF Predictions from Models A, B, C\n\n"
-           "We load the **best** model's validation (OOF) predictions from each.\n"
-           "For Models A and B (lap-level), we aggregate to race level using the last lap."),
+        md("## 1. Discover All Variant Predictions\n\n"
+           "Scan `data/training/` for all Validation parquets from each model type."),
         code("""\
-def find_best_model(model_type):
-    \"\"\"Find the best model for a type by reading test parquets and picking lowest RMSE.\"\"\"
-    test_files = sorted(TRAINING_DIR.glob(f"model_{model_type}_*_Test.parquet"))
-    if not test_files:
-        raise FileNotFoundError(
-            f"No test parquets found for Model {model_type} in {TRAINING_DIR}. "
-            f"Run the Model {model_type} training notebook first."
-        )
-    best_name, best_rmse = None, float("inf")
-    for f in test_files:
-        df_t = pd.read_parquet(f)
-        rmse = np.sqrt(mean_squared_error(df_t["y_true"], df_t["y_pred"]))
-        name = f.stem.replace(f"model_{model_type}_", "").replace("_Test", "")
-        if rmse < best_rmse:
-            best_rmse = rmse
-            best_name = name
-    print(f"Best Model {model_type}: {best_name} (test RMSE={best_rmse:.4f})")
-    return best_name
+def discover_variants(model_type):
+    \"\"\"Find all variant names that have Validation parquets.\"\"\"
+    files = sorted(TRAINING_DIR.glob(f"model_{model_type}_*_Validation.parquet"))
+    variants = []
+    for f in files:
+        name = f.stem.replace(f"model_{model_type}_", "").replace("_Validation", "")
+        variants.append(name)
+    return variants
 
-best_A = find_best_model("A")
-best_B = find_best_model("B")
-best_C = find_best_model("C")"""),
+variants_A = discover_variants("A")
+variants_B = discover_variants("B")
+variants_C = discover_variants("C")
+print(f"Model A variants ({len(variants_A)}): {variants_A}")
+print(f"Model B variants ({len(variants_B)}): {variants_B}")
+print(f"Model C variants ({len(variants_C)}): {variants_C}")
+print(f"Total combinations: {len(variants_A)} × {len(variants_B)} × {len(variants_C)} = "
+      f"{len(variants_A) * len(variants_B) * len(variants_C)}")"""),
         code("""\
 def aggregate_lap_to_race(val_df):
     \"\"\"Aggregate lap-level predictions to race level using the last lap per driver-race.\"\"\"
@@ -1052,139 +1108,99 @@ def aggregate_lap_to_race(val_df):
     last_laps = val_df.groupby(["season", "round", "driver_abbrev"]).tail(1)
     return last_laps[["season", "round", "driver_abbrev", "y_true", "y_pred"]].copy()
 
-# Load OOF validation predictions (GCS with local fallback)
-val_A = load_training_parquet(f"model_A_{best_A}_Validation.parquet", TRAINING_DIR)
-val_B = load_training_parquet(f"model_B_{best_B}_Validation.parquet", TRAINING_DIR)
-val_C = load_training_parquet(f"model_C_{best_C}_Validation.parquet", TRAINING_DIR)
-
-# Aggregate A and B to race level
-race_A = aggregate_lap_to_race(val_A).rename(columns={"y_pred": "pred_A", "y_true": "true_A"})
-race_B = aggregate_lap_to_race(val_B).rename(columns={"y_pred": "pred_B", "y_true": "true_B"})
-race_C = val_C.rename(columns={"y_pred": "pred_C", "y_true": "true_C"})
-
-print(f"Race-level A: {race_A.shape}")
-print(f"Race-level B: {race_B.shape}")
-print(f"Race-level C: {race_C.shape}")"""),
-        md("## 2. Build Meta-Feature Matrix"),
-        code("""\
+# Load and cache all variant predictions
 merge_key = ["season", "round", "driver_abbrev"]
-meta = race_C[merge_key + ["pred_C", "true_C"]].copy()
+preds_A, preds_B, preds_C = {}, {}, {}
 
-# Merge A predictions (OOF covers 2019-2023)
-meta = meta.merge(race_A[merge_key + ["pred_A"]], on=merge_key, how="left")
-# Merge B predictions
-meta = meta.merge(race_B[merge_key + ["pred_B"]], on=merge_key, how="left")
+for v in variants_A:
+    df = load_training_parquet(f"model_A_{v}_Validation.parquet", TRAINING_DIR)
+    race_df = aggregate_lap_to_race(df)
+    preds_A[v] = race_df.rename(columns={"y_pred": f"pred_A_{v}", "y_true": "true_pos"})
 
-# Target is the race-level finish position from Model C's ground truth
-meta["finish_position"] = meta["true_C"]
-meta = meta.dropna(subset=["finish_position"])
+for v in variants_B:
+    df = load_training_parquet(f"model_B_{v}_Validation.parquet", TRAINING_DIR)
+    race_df = aggregate_lap_to_race(df)
+    preds_B[v] = race_df.rename(columns={"y_pred": f"pred_B_{v}", "y_true": "true_pos"})
 
-print(f"Meta-feature matrix: {meta.shape}")
-print(f"Seasons: {sorted(meta['season'].unique())}")
-print(f"NaN counts:\\n{meta[['pred_A', 'pred_B', 'pred_C']].isna().sum()}")
-meta.head()"""),
+for v in variants_C:
+    df = load_training_parquet(f"model_C_{v}_Validation.parquet", TRAINING_DIR)
+    preds_C[v] = df.rename(columns={"y_pred": f"pred_C_{v}", "y_true": "true_pos"})
+
+print(f"Loaded {len(preds_A)} A, {len(preds_B)} B, {len(preds_C)} C variant predictions")"""),
+        md("## 2. Build All-Variants Meta Matrix"),
         code("""\
-FEATURE_COLS = ["pred_A", "pred_B", "pred_C"]
-TARGET = "finish_position"
-ID_COLS = ["season", "round", "driver_abbrev"]
+# Start with first C variant to get the base structure
+first_c = variants_C[0]
+base = preds_C[first_c][merge_key + ["true_pos", f"pred_C_{first_c}"]].copy()
 
-X = meta[FEATURE_COLS]
-y = meta[TARGET]
-groups = meta["season"].values
-print(f"X: {X.shape}, y: {y.shape}")"""),
-        md("## 3. CV Splitter\n\n"
-           "Using LeaveOneSeasonOut with test_season=2023 — the latest season with "
-           "genuine OOF predictions from all three base models.\n\n"
-           "Season 2024 cannot be used: Model A excludes it (its own test season), "
-           "and Models B/C include it in training (leakage)."),
+# Merge all other C variants
+for v in variants_C[1:]:
+    base = base.merge(preds_C[v][merge_key + [f"pred_C_{v}"]], on=merge_key, how="outer")
+
+# Merge all A variants
+for v in variants_A:
+    base = base.merge(preds_A[v][merge_key + [f"pred_A_{v}"]], on=merge_key, how="left")
+
+# Merge all B variants
+for v in variants_B:
+    base = base.merge(preds_B[v][merge_key + [f"pred_B_{v}"]], on=merge_key, how="left")
+
+base = base.dropna(subset=["true_pos"]).reset_index(drop=True)
+y_all = base["true_pos"]
+groups_all = base["season"].values
+print(f"All-variants matrix: {base.shape}")
+print(f"Seasons: {sorted(base['season'].unique())}")"""),
+        md("## 3. CV Splitter"),
         code("""\
-# OOF predictions from all models cover 2019-2023
-# 2024 is excluded: it's Model A's test season, and in B/C's training set (leakage)
-available_seasons = sorted(meta["season"].unique())
+available_seasons = sorted(base["season"].unique())
 val_seasons = [s for s in available_seasons if s != 2023]
 splitter = LeaveOneSeasonOut(val_seasons=val_seasons, test_season=2023)
-print(f"Val seasons: {val_seasons}")
-print(f"CV folds: {splitter.get_n_splits()}")
-for i, (tr, va) in enumerate(splitter.split(groups)):
-    print(f"  Fold {i}: train={len(tr)}, val={len(va)}")"""),
-        md("## 4. Round 1 — Screen 6 Candidates"),
+print(f"Val seasons: {val_seasons}, Test: 2023")
+print(f"CV folds: {splitter.get_n_splits()}")"""),
+        md("## 4. Phase 1 — RidgeCV Screen of ALL Combinations\n\n"
+           "Fast screen using RidgeCV on every A x B x C combination."),
         code("""\
-candidates_d = {
-    "RidgeCV": wrap_imputer(RidgeCV()),
-    "LassoCV": wrap_imputer(LassoCV(random_state=42, max_iter=5000)),
-    "ElasticNetCV": wrap_imputer(ElasticNetCV(random_state=42, max_iter=5000)),
-    "XGBoost_shallow": xgb.XGBRegressor(
-        n_estimators=100, max_depth=3, random_state=42, verbosity=0),
-    "LightGBM_shallow": lgb.LGBMRegressor(
-        n_estimators=100, max_depth=3, random_state=42, verbose=-1),
-    "WeightedAvg": None,  # handled separately
-}
+all_combos = list(itertools.product(variants_A, variants_B, variants_C))
+print(f"Screening {len(all_combos)} combinations with RidgeCV...")
 
-# Evaluate non-WeightedAvg candidates
-r1_rows = []
-for name, model in candidates_d.items():
-    if name == "WeightedAvg":
-        continue
-    print(f"  Screening {name}...")
-    result = cv_evaluate(model, X, y, splitter, groups)
-    r1_rows.append({"model": name, **result})
+phase1_results = []
+for i, (va, vb, vc) in enumerate(all_combos):
+    feat_cols = [f"pred_A_{va}", f"pred_B_{vb}", f"pred_C_{vc}"]
+    X_combo = base[feat_cols]
 
-# Weighted average via grid search (CV fold-by-fold to match other candidates)
-best_wa_rmse = float("inf")
-best_weights = None
-best_fold_rmses = None
-best_fold_maes = None
+    model = wrap_imputer(RidgeCV())
+    result = cv_evaluate(model, X_combo, y_all, splitter, groups_all)
+    phase1_results.append({
+        "A": va, "B": vb, "C": vc,
+        "combo": f"{va}__{vb}__{vc}",
+        "mean_rmse": result["mean_rmse"],
+        "std_rmse": result["std_rmse"],
+    })
+    if (i + 1) % 50 == 0:
+        print(f"  {i + 1}/{len(all_combos)} done...")
 
-wa_pred_cols = X[["pred_A", "pred_B", "pred_C"]]
-
-for w_a in np.arange(0.0, 1.05, 0.1):
-    for w_b in np.arange(0.0, 1.05 - w_a, 0.1):
-        w_c = 1.0 - w_a - w_b
-        if w_c < 0:
-            continue
-        weights = pd.Series({"pred_A": w_a, "pred_B": w_b, "pred_C": w_c})
-
-        fold_rmses = []
-        fold_maes = []
-        for tr, va in splitter.split(groups):
-            y_va = y.iloc[va]
-            avail = wa_pred_cols.iloc[va].notna()
-            weighted_sum = wa_pred_cols.iloc[va].mul(weights, axis=1).sum(axis=1, skipna=True)
-            weight_sum = avail.mul(weights, axis=1).sum(axis=1)
-            preds_va = weighted_sum.div(weight_sum.where(weight_sum > 0, np.nan))
-            valid = preds_va.notna()
-            if valid.sum() == 0:
-                continue
-            fold_rmses.append(np.sqrt(mean_squared_error(y_va[valid], preds_va[valid])))
-            fold_maes.append(mean_absolute_error(y_va[valid], preds_va[valid]))
-
-        if not fold_rmses:
-            continue
-        mean_rmse = float(np.mean(fold_rmses))
-        if mean_rmse < best_wa_rmse:
-            best_wa_rmse = mean_rmse
-            best_weights = (round(w_a, 1), round(w_b, 1), round(w_c, 1))
-            best_fold_rmses = fold_rmses
-            best_fold_maes = fold_maes
-
-print(f"  WeightedAvg best weights: A={best_weights[0]}, B={best_weights[1]}, C={best_weights[2]}, CV RMSE={best_wa_rmse:.4f}")
-r1_rows.append({
-    "model": "WeightedAvg", "mean_rmse": best_wa_rmse,
-    "std_rmse": float(np.std(best_fold_rmses)),
-    "mean_mae": float(np.mean(best_fold_maes)),
-    "fold_rmse": best_fold_rmses, "fold_mae": best_fold_maes,
-})
-
-r1_df = pd.DataFrame(r1_rows).sort_values("mean_rmse").reset_index(drop=True)
-r1_df[["model", "mean_rmse", "std_rmse"]]"""),
+p1_df = pd.DataFrame(phase1_results).sort_values("mean_rmse").reset_index(drop=True)
+print(f"\\nPhase 1 complete. Top 10 combinations:")
+print(p1_df.head(10)[["combo", "mean_rmse", "std_rmse"]].to_string(index=False))"""),
         code("""\
-top4_names = r1_df["model"].head(4).tolist()
-if "WeightedAvg" in top4_names:
-    top4_names.remove("WeightedAvg")
-    top4_names = r1_df[r1_df["model"] != "WeightedAvg"]["model"].head(4).tolist()
-print(f"Advancing to Round 2 (excluding WeightedAvg): {top4_names}")"""),
-        md("## 5. Round 2 — Optuna HP Tuning (top 4, 15 trials each)"),
+fig, ax = plt.subplots(figsize=(12, 6))
+ax.hist(p1_df["mean_rmse"], bins=40, edgecolor="black", alpha=0.7)
+best_val = p1_df["mean_rmse"].iloc[0]
+top20_val = p1_df["mean_rmse"].iloc[19]
+ax.axvline(best_val, color="red", linestyle="--", label=f"Best: {best_val:.4f}")
+ax.axvline(top20_val, color="orange", linestyle="--", label=f"Top-20: {top20_val:.4f}")
+ax.set_xlabel("CV RMSE (RidgeCV)")
+ax.set_ylabel("Count")
+ax.set_title(f"Phase 1: Distribution of {len(all_combos)} Combination RMSEs")
+ax.legend()
+plt.tight_layout()
+plt.show()"""),
+        md("## 5. Phase 2 — Full Tournament on Top 20"),
         code("""\
+TOP_N = 20
+top_combos = p1_df.head(TOP_N)
+print(f"Phase 2: Full tournament on top {TOP_N} combinations\\n")
+
 D_MODEL_CLASSES = {
     "RidgeCV": RidgeCV,
     "LassoCV": LassoCV,
@@ -1243,126 +1259,129 @@ def reconstruct_d_params(name, best_params):
         params.update(random_state=42, max_iter=5000)
     return params
 
-def run_d_optuna(name, X, y, splitter, groups, n_trials):
+phase2_results = []
+for _, row in top_combos.iterrows():
+    va, vb, vc = row["A"], row["B"], row["C"]
+    combo_name = row["combo"]
+    feat_cols = [f"pred_A_{va}", f"pred_B_{vb}", f"pred_C_{vc}"]
+    X_combo = base[feat_cols]
+
+    # Screen 5 meta-learners
+    combo_rows = []
+    meta_candidates = [
+        ("RidgeCV", wrap_imputer(RidgeCV())),
+        ("LassoCV", wrap_imputer(LassoCV(random_state=42, max_iter=5000))),
+        ("ElasticNetCV", wrap_imputer(
+            ElasticNetCV(random_state=42, max_iter=5000))),
+        ("XGBoost_shallow", xgb.XGBRegressor(
+            n_estimators=100, max_depth=3, random_state=42, verbosity=0)),
+        ("LightGBM_shallow", lgb.LGBMRegressor(
+            n_estimators=100, max_depth=3, random_state=42, verbose=-1)),
+    ]
+    for meta_name, meta_model in meta_candidates:
+        result = cv_evaluate(meta_model, X_combo, y_all, splitter, groups_all)
+        combo_rows.append({"meta": meta_name, "mean_rmse": result["mean_rmse"]})
+
+    best_meta = sorted(combo_rows, key=lambda r: r["mean_rmse"])[0]
+
+    # Optuna tune the best meta-learner (10 trials)
+    best_meta_name = best_meta["meta"]
     def objective(trial):
-        params = get_d_param_space(name, trial)
-        model = D_MODEL_CLASSES[name](**params)
-        if name not in NAN_TOLERANT_D:
+        params = get_d_param_space(best_meta_name, trial)
+        model = D_MODEL_CLASSES[best_meta_name](**params)
+        if best_meta_name not in NAN_TOLERANT_D:
             model = wrap_imputer(model)
-        return cv_evaluate(model, X, y, splitter, groups)["mean_rmse"]
+        return cv_evaluate(model, X_combo, y_all, splitter, groups_all)["mean_rmse"]
+
     study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(seed=42))
-    study.optimize(objective, n_trials=n_trials)
-    return study.best_params, study.best_value
+    study.optimize(objective, n_trials=10, show_progress_bar=False)
 
-r2_results = []
-for name in top4_names:
-    print(f"Tuning {name}...")
-    best_params, best_rmse = run_d_optuna(name, X, y, splitter, groups, n_trials=15)
-    r2_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
-    print(f"  Best RMSE: {best_rmse:.4f}")
+    phase2_results.append({
+        "A": va, "B": vb, "C": vc, "combo": combo_name,
+        "meta": best_meta_name, "best_rmse": study.best_value,
+        "best_params": study.best_params,
+        "phase1_rmse": row["mean_rmse"],
+    })
+    print(f"  {combo_name}: meta={best_meta_name}, RMSE={study.best_value:.4f}")
 
-r2_df = pd.DataFrame(r2_results).sort_values("best_rmse").reset_index(drop=True)
-r2_df[["model", "best_rmse"]]"""),
+p2_df = pd.DataFrame(phase2_results).sort_values("best_rmse").reset_index(drop=True)
+print(f"\\nPhase 2 complete. Top 5:")
+print(p2_df.head()[["combo", "meta", "best_rmse"]].to_string(index=False))"""),
         code("""\
-top3_names = r2_df["model"].head(3).tolist()
-print(f"Advancing to Round 3: {top3_names}")"""),
-        md("## 6. Round 3 — Final HP Tuning (top 3, 20 trials each)"),
+fig, ax = plt.subplots(figsize=(14, 6))
+ax.barh(range(TOP_N), p2_df["best_rmse"].values)
+ax.set_yticks(range(TOP_N))
+ax.set_yticklabels([f"{r['combo']}\\n({r['meta']})" for _, r in p2_df.iterrows()], fontsize=7)
+ax.set_xlabel("CV RMSE (tuned)")
+ax.set_title(f"Phase 2: Top {TOP_N} Combinations After Optuna Tuning")
+ax.invert_yaxis()
+plt.tight_layout()
+plt.show()"""),
+        md("## 6. Test Set Evaluation (Top 5 Combinations)"),
         code("""\
-r3_results = []
-for name in top3_names:
-    print(f"Fine-tuning {name}...")
-    best_params, best_rmse = run_d_optuna(name, X, y, splitter, groups, n_trials=20)
-    r3_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
-    print(f"  Best RMSE: {best_rmse:.4f}")
+train_idx, test_idx = splitter.get_test_split(groups_all)
+id_train = base[merge_key].iloc[train_idx]
+id_test = base[merge_key].iloc[test_idx]
+y_train = y_all.iloc[train_idx]
+y_test = y_all.iloc[test_idx]
 
-r3_df = pd.DataFrame(r3_results).sort_values("best_rmse").reset_index(drop=True)
-r3_best_params = {row["model"]: row["best_params"] for _, row in r3_df.iterrows()}
-r3_df[["model", "best_rmse"]]"""),
-        md("## 7. Test Set Evaluation"),
-        code("""\
-train_idx, test_idx = splitter.get_test_split(groups)
-X_train_full, X_test = X.iloc[train_idx], X.iloc[test_idx]
-y_train_full, y_test = y.iloc[train_idx], y.iloc[test_idx]
-id_train = meta[ID_COLS].iloc[train_idx]
-id_test = meta[ID_COLS].iloc[test_idx]
+print(f"Train: {len(train_idx)}, Test: {len(test_idx)}")
+print(f"Test season: {sorted(base['season'].iloc[test_idx].unique())}")
 
-print(f"Train: {X_train_full.shape}, Test: {X_test.shape}")
-print(f"Test season(s): {sorted(meta['season'].iloc[test_idx].unique())}")"""),
-        code("""\
 final_results = []
-for name in top3_names:
-    params = reconstruct_d_params(name, r3_best_params[name])
-    model = D_MODEL_CLASSES[name](**params)
-    if name not in NAN_TOLERANT_D:
+for _, row in p2_df.head(5).iterrows():
+    va, vb, vc = row["A"], row["B"], row["C"]
+    feat_cols = [f"pred_A_{va}", f"pred_B_{vb}", f"pred_C_{vc}"]
+    X_train_combo = base[feat_cols].iloc[train_idx]
+    X_test_combo = base[feat_cols].iloc[test_idx]
+
+    params = reconstruct_d_params(row["meta"], row["best_params"])
+    model = D_MODEL_CLASSES[row["meta"]](**params)
+    if row["meta"] not in NAN_TOLERANT_D:
         model = wrap_imputer(model)
 
-    model.fit(X_train_full, y_train_full)
+    model.fit(X_train_combo, y_train)
 
-    train_preds = model.predict(X_train_full)
-    train_rmse = np.sqrt(mean_squared_error(y_train_full, train_preds))
-
-    test_preds = model.predict(X_test)
+    test_preds = model.predict(X_test_combo)
     test_rmse = np.sqrt(mean_squared_error(y_test, test_preds))
     test_mae = mean_absolute_error(y_test, test_preds)
 
-    val_rmse = r3_df.loc[r3_df["model"] == name, "best_rmse"].values[0]
-
     final_results.append({
-        "model": name, "train_rmse": train_rmse,
-        "val_rmse": val_rmse, "test_rmse": test_rmse, "test_mae": test_mae,
-        "overfit_gap": test_rmse - val_rmse,
+        "combo": row["combo"], "meta": row["meta"],
+        "val_rmse": row["best_rmse"], "test_rmse": test_rmse, "test_mae": test_mae,
+        "overfit_gap": test_rmse - row["best_rmse"],
     })
-    print(f"{name}: train={train_rmse:.4f}, val={val_rmse:.4f}, test={test_rmse:.4f}")
+    print(f"  {row['combo']} ({row['meta']}): val={row['best_rmse']:.4f}, test={test_rmse:.4f}")
 
 final_df = pd.DataFrame(final_results).sort_values("test_rmse").reset_index(drop=True)
 final_df"""),
+        md("## 7. Save Artifacts (Top 5 Combinations)"),
         code("""\
-# Also evaluate the weighted average on test set (with weight renormalization for missing preds)
-wa_weights = pd.Series({"pred_A": best_weights[0], "pred_B": best_weights[1], "pred_C": best_weights[2]})
-wa_avail = X_test[["pred_A", "pred_B", "pred_C"]].notna()
-wa_wsum = X_test[["pred_A", "pred_B", "pred_C"]].mul(wa_weights, axis=1).sum(axis=1, skipna=True)
-wa_wdenom = wa_avail.mul(wa_weights, axis=1).sum(axis=1)
-wa_test_pred = wa_wsum.div(wa_wdenom.where(wa_wdenom > 0, np.nan))
-wa_valid = wa_test_pred.notna()
-wa_test_rmse = np.sqrt(mean_squared_error(y_test[wa_valid], wa_test_pred[wa_valid]))
-print(f"WeightedAvg test RMSE: {wa_test_rmse:.4f} (weights: A={best_weights[0]}, B={best_weights[1]}, C={best_weights[2]})")"""),
-        code("""\
-fig, ax = plt.subplots(figsize=(8, 4))
-x = np.arange(len(final_df))
-w = 0.25
-ax.bar(x - w, final_df["train_rmse"], w, label="Train")
-ax.bar(x, final_df["val_rmse"], w, label="Val")
-ax.bar(x + w, final_df["test_rmse"], w, label="Test")
-ax.set_xticks(x)
-ax.set_xticklabels(final_df["model"], rotation=30, ha="right")
-ax.set_ylabel("RMSE")
-ax.set_title("Model D — Stacking Meta-Model: Train / Val / Test RMSE")
-ax.legend()
-plt.tight_layout()
-plt.show()"""),
-        md("## 8. Save Artifacts"),
-        code("""\
-for name in top3_names:
-    params = reconstruct_d_params(name, r3_best_params[name])
-    model = D_MODEL_CLASSES[name](**params)
-    if name not in NAN_TOLERANT_D:
-        model = wrap_imputer(model)
-    model.fit(X_train_full, y_train_full)
+for _, row in p2_df.head(5).iterrows():
+    va, vb, vc = row["A"], row["B"], row["C"]
+    feat_cols = [f"pred_A_{va}", f"pred_B_{vb}", f"pred_C_{vc}"]
+    X_train_combo = base[feat_cols].iloc[train_idx]
+    X_test_combo = base[feat_cols].iloc[test_idx]
 
-    # Save predictions
+    params = reconstruct_d_params(row["meta"], row["best_params"])
+    model = D_MODEL_CLASSES[row["meta"]](**params)
+    if row["meta"] not in NAN_TOLERANT_D:
+        model = wrap_imputer(model)
+    model.fit(X_train_combo, y_train)
+
+    combo_tag = f"{va}__{vb}__{vc}__{row['meta']}"
     for split_name, X_s, y_s, id_s in [
-        ("Training", X_train_full, y_train_full, id_train),
-        ("Test", X_test, y_test, id_test),
+        ("Training", X_train_combo, y_train, id_train),
+        ("Test", X_test_combo, y_test, id_test),
     ]:
         out = id_s.copy()
         out["y_true"] = y_s.values
         out["y_pred"] = model.predict(X_s)
-        fname = f"model_D_{name}_{split_name}.parquet"
+        fname = f"model_D_{combo_tag}_{split_name}.parquet"
         uri = save_training_parquet(out, fname, TRAINING_DIR)
         print(f"  Saved {fname} -> {uri}")
 
-    # Save pickle
-    pkl_name = f"Model_D_{name}.pkl"
+    pkl_name = f"Model_D_{combo_tag}.pkl"
     uri = gcs_save_model_pickle(model, pkl_name, MODEL_DIR)
     print(f"  Saved {pkl_name} -> {uri}")
 
@@ -1370,13 +1389,15 @@ print("\\nDone! All Model D artifacts saved.")"""),
         md("## Summary"),
         code("""\
 print("=" * 60)
-print("MODEL D (STACKING) TRAINING COMPLETE")
+print("MODEL D (ALL-COMBINATIONS STACKING) COMPLETE")
 print("=" * 60)
-print(f"\\nBest base models: A={best_A}, B={best_B}, C={best_C}")
-print(f"Weighted average: A={best_weights[0]}, B={best_weights[1]}, C={best_weights[2]}, RMSE={wa_test_rmse:.4f}")
-print(f"\\nFinal meta-models:")
+print(f"\\nTotal combinations screened: {len(all_combos)}")
+print(f"Phase 1 (RidgeCV): {len(all_combos)} combos -> top {TOP_N}")
+print(f"Phase 2 (tournament + Optuna): top {TOP_N} -> final 5")
+print(f"\\nFinal 5 combinations:")
 for _, row in final_df.iterrows():
-    print(f"  {row['model']:20s}  test_rmse={row['test_rmse']:.4f}  gap={row['overfit_gap']:.4f}")"""),
+    print(f"  {row['combo']:40s}  meta={row['meta']:15s}  "
+          f"test_rmse={row['test_rmse']:.4f}  gap={row['overfit_gap']:.4f}")"""),
     ]
     return cells
 
@@ -1546,7 +1567,9 @@ styled = (
     results_df[display_cols]
     .style.format({k: v.replace("%", "") for k, v in fmt.items()})
     .background_gradient(subset=["RMSE", "MAE", "Max_Error", "MAPE"], cmap="RdYlGn_r")
-    .background_gradient(subset=["R²", "Within_1", "Within_3", "Spearman_ρ", "Kendall_τ"], cmap="RdYlGn")
+    .background_gradient(
+        subset=["R²", "Within_1", "Within_3", "Spearman_ρ", "Kendall_τ"],
+        cmap="RdYlGn")
 )
 styled"""),
         md("## 5. Best Variant per Model (Test Set)\n\n"
@@ -1599,7 +1622,8 @@ for idx, (model, variant) in enumerate(best_variants):
         break
     ax = axes[idx]
     subset = overfit_df[(overfit_df["Model"] == model) & (overfit_df["Variant"] == variant)]
-    subset = subset.set_index("Split").reindex([s for s in split_order if s in subset["Split"].values])
+    valid = [s for s in split_order if s in subset["Split"].values]
+    subset = subset.set_index("Split").reindex(valid)
 
     x = np.arange(len(CRITERIA_COLS))
     for i, split in enumerate(split_order):
@@ -1663,7 +1687,8 @@ for model_type in sorted(test_df["Model"].unique()):
            "mean the model ranks drivers correctly even if absolute positions are off."),
         code("""\
 rank_cols = ["Model", "Variant", "Split", "Spearman_ρ", "Kendall_τ"]
-rank_df = results_df[results_df["Split"] == "Test"][rank_cols].sort_values("Spearman_ρ", ascending=False)
+test_df = results_df[results_df["Split"] == "Test"]
+rank_df = test_df[rank_cols].sort_values("Spearman_ρ", ascending=False)
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
