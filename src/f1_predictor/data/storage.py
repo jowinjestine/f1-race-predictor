@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pandas as pd
 from google.cloud import storage
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -133,15 +130,13 @@ def download_blob(blob_name: str, local_path: Path) -> Path:  # pragma: no cover
 
 
 def save_training_parquet(
-    df: "pd.DataFrame", filename: str, local_dir: "Path | None" = None
+    df: pd.DataFrame, filename: str, local_dir: Path | None = None
 ) -> str:  # pragma: no cover
     """Save a training parquet locally and upload to GCS.
 
     Returns the gs:// URI. Falls back to local-only if GCS unavailable.
     """
-    from pathlib import Path as _P
-
-    local_dir = local_dir or _P("data/training")
+    local_dir = local_dir or Path("data/training")
     local_dir.mkdir(parents=True, exist_ok=True)
     local_path = local_dir / filename
     df.to_parquet(local_path, index=False)
@@ -154,16 +149,15 @@ def save_training_parquet(
 
 
 def save_model_pickle(
-    model: object, filename: str, local_dir: "Path | None" = None
+    model: object, filename: str, local_dir: Path | None = None
 ) -> str:  # pragma: no cover
     """Save a model pickle locally and upload to GCS.
 
     Returns the gs:// URI. Falls back to local-only if GCS unavailable.
     """
     import pickle
-    from pathlib import Path as _P
 
-    local_dir = local_dir or _P("data/raw/model")
+    local_dir = local_dir or Path("data/raw/model")
     local_dir.mkdir(parents=True, exist_ok=True)
     local_path = local_dir / filename
     with open(local_path, "wb") as f:
@@ -177,7 +171,7 @@ def save_model_pickle(
 
 
 def save_notebook(
-    local_path: "Path", notebook_name: str
+    local_path: Path, notebook_name: str
 ) -> str:  # pragma: no cover
     """Upload an executed notebook to GCS."""
     try:
@@ -188,24 +182,20 @@ def save_notebook(
 
 
 def load_training_parquet(
-    filename: str, local_dir: "Path | None" = None
-) -> "pd.DataFrame":
+    filename: str, local_dir: Path | None = None
+) -> pd.DataFrame:
     """Load a training parquet from GCS, falling back to local."""
-    from pathlib import Path as _P
-
-    local_dir = local_dir or _P("data/training")
+    local_dir = local_dir or Path("data/training")
     blob_name = f"data/training/{filename}"
     local_path = local_dir / filename
     return load_from_gcs_or_local(blob_name, local_path)
 
 
 def sync_training_from_gcs(
-    model_type: str, local_dir: "Path | None" = None
-) -> list["Path"]:  # pragma: no cover
+    model_type: str, local_dir: Path | None = None
+) -> list[Path]:  # pragma: no cover
     """Download all training parquets for a model type from GCS."""
-    from pathlib import Path as _P
-
-    local_dir = local_dir or _P("data/training")
+    local_dir = local_dir or Path("data/training")
     local_dir.mkdir(parents=True, exist_ok=True)
     prefix = f"data/training/model_{model_type}_"
     blobs = list_blobs(prefix)
