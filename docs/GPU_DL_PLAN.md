@@ -1,16 +1,16 @@
-# GPU Deep Learning Models + WSL2/ROCm Training Plan
+# GPU Deep Learning Models — GCE CUDA Training
 
 ## Overview
 
 This document describes the GPU training architecture for the F1 Race Predictor.
-The pipeline supports both **AMD ROCm** (WSL2) and **NVIDIA CUDA** (GCE VM) backends.
+The primary training target is a **GCE VM with NVIDIA T4 + CUDA 12.4**.
 
-## Hardware Targets
+## Hardware Target
 
-| Environment | GPU | VRAM | Backend |
-|-------------|-----|------|---------|
-| WSL2 (primary) | AMD RX 7900 XT | 20 GB | ROCm 6.2 |
-| GCE VM (fallback) | NVIDIA T4 | 16 GB | CUDA |
+| Environment | GPU | VRAM | Backend | Status |
+|-------------|-----|------|---------|--------|
+| GCE VM (primary) | NVIDIA T4 | 16 GB | CUDA 12.4 | Active |
+| WSL2 (deprecated) | AMD RX 7900 XT | 20 GB | ROCm 6.2 | Not recommended |
 
 ## GPU Backend Compatibility
 
@@ -49,16 +49,24 @@ All combinations of A x B x C variants, two-phase approach:
 | `src/f1_predictor/models/gpu.py` | Unified GPU detection (ROCm/CUDA/CPU) |
 | `src/f1_predictor/models/architectures.py` | GRU, FT-Transformer, MLP wrappers |
 | `src/f1_predictor/models/dl_utils.py` | Training loop, early stopping, datasets |
-| `scripts/setup_wsl_env.sh` | One-time WSL2 environment bootstrap |
-| `scripts/run_training_wsl.sh` | Local training orchestrator |
-| `scripts/run_training_remote.sh` | GCE VM training (preserved, fallback) |
+| `scripts/run_training_remote.sh` | GCE VM training (primary) |
+| `scripts/fetch_training_results.sh` | Download results from GCS |
+| `scripts/setup_wsl_env.sh` | WSL2 environment bootstrap (deprecated) |
+| `scripts/run_training_wsl.sh` | Local WSL2 training (deprecated) |
 
-## Quick Start (WSL2)
+## Quick Start (GCE VM)
 
 ```bash
-# One-time setup
-bash scripts/setup_wsl_env.sh
+# Launch training on GCE VM (runs all models + comparison, self-deletes)
+bash scripts/run_training_remote.sh
 
-# Run full training pipeline
-bash scripts/run_training_wsl.sh
+# Monitor progress
+gcloud compute ssh f1-training-XXXXX --zone=us-central1-a \
+    --command='tail -f /var/log/f1-training.log'
+
+# Check completion
+gsutil stat gs://f1-predictor-artifacts-jowin/staging/training-run/DONE
+
+# Download results
+bash scripts/fetch_training_results.sh
 ```

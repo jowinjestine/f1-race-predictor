@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# DEPRECATED — Preserved for reference only.
+# Primary training now uses the GCE VM script: bash scripts/run_training_remote.sh
+# This script targets WSL2 + AMD ROCm. See docs/GPU_DL_PLAN.md.
+#
 # Run the full F1 Race Predictor training pipeline locally on WSL2.
 # Supports AMD ROCm and NVIDIA CUDA GPUs.
 set -euo pipefail

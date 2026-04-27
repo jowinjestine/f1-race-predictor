@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Run Model A & B training on a GCP VM with T4 GPU, then pull results back.
-# Model C is already trained locally. Model D runs locally after A+B finish.
+# Run all model training (A, B, C, D) + comparison on a GCP VM with T4 GPU.
+# The VM self-deletes after uploading results to GCS.
 #
 # Usage:
 #   bash scripts/run_training_remote.sh [--cpu]
@@ -64,6 +64,9 @@ gsutil -q cp \
 gsutil -q cp \
     data/processed/lap_notyre/features_laps_notyre.parquet \
     "gs://$BUCKET/$STAGING_PREFIX/features_laps_notyre.parquet"
+gsutil -q cp \
+    data/processed/race/features_race.parquet \
+    "gs://$BUCKET/$STAGING_PREFIX/features_race.parquet"
 
 echo ">>> Staging complete."
 
@@ -93,21 +96,26 @@ tar xzf repo.tar.gz
 rm repo.tar.gz
 
 # Place data files locally as fallback
-mkdir -p data/processed/lap_tyre data/processed/lap_notyre data/training data/raw/model
+mkdir -p data/processed/lap_tyre data/processed/lap_notyre data/processed/race \
+    data/training data/raw/model
 gsutil -q cp "gs://$BUCKET/$STAGING/features_laps_tyre.parquet" \
     data/processed/lap_tyre/features_laps_tyre.parquet
 gsutil -q cp "gs://$BUCKET/$STAGING/features_laps_notyre.parquet" \
     data/processed/lap_notyre/features_laps_notyre.parquet
+gsutil -q cp "gs://$BUCKET/$STAGING/features_race.parquet" \
+    data/processed/race/features_race.parquet
 
 # Install Python + deps
 uv python install 3.11
 uv sync --frozen --group dev
 uv pip install xgboost lightgbm optuna
 
-# Check GPU
+# Check GPU and install PyTorch + DL deps
 if nvidia-smi > /dev/null 2>&1; then
-    echo "GPU detected — installing GPU-enabled XGBoost/LightGBM"
+    echo "GPU detected — installing GPU-enabled packages"
     uv pip install xgboost --upgrade
+    uv pip install torch --index-url https://download.pytorch.org/whl/cu124
+    uv pip install rtdl-revisiting-models
 fi
 
 # Regenerate notebooks (picks up GPU detection at runtime)
@@ -127,16 +135,44 @@ uv run jupyter nbconvert --to notebook --execute \
     notebooks/05b_model_B_training.ipynb \
     --output 05b_model_B_training.ipynb 2>&1 || true
 
+# Run Model C
+echo "=== Running Model C: $(date) ==="
+uv run jupyter nbconvert --to notebook --execute \
+    --ExecutePreprocessor.timeout=3600 \
+    notebooks/05c_model_C_training.ipynb \
+    --output 05c_model_C_training.ipynb 2>&1 || true
+
+# Run Model D (depends on A, B, C outputs)
+echo "=== Running Model D: $(date) ==="
+uv run jupyter nbconvert --to notebook --execute \
+    --ExecutePreprocessor.timeout=3600 \
+    notebooks/05d_model_D_stacking.ipynb \
+    --output 05d_model_D_stacking.ipynb 2>&1 || true
+
+# Run comparison notebook
+echo "=== Running Comparison: $(date) ==="
+uv run jupyter nbconvert --to notebook --execute \
+    --ExecutePreprocessor.timeout=1800 \
+    notebooks/06_model_comparison.ipynb \
+    --output 06_model_comparison.ipynb 2>&1 || true
+
 # Upload results to GCS
 echo "=== Uploading results: $(date) ==="
 gsutil -m -q cp data/training/model_A_*.parquet "gs://$BUCKET/$RESULTS/training/"
 gsutil -m -q cp data/training/model_B_*.parquet "gs://$BUCKET/$RESULTS/training/"
 gsutil -m -q cp data/raw/model/Model_A_*.pkl "gs://$BUCKET/$RESULTS/raw/model/"
 gsutil -m -q cp data/raw/model/Model_B_*.pkl "gs://$BUCKET/$RESULTS/raw/model/"
+gsutil -m -q cp data/training/model_C_*.parquet "gs://$BUCKET/$RESULTS/training/"
+gsutil -m -q cp data/training/model_D_*.parquet "gs://$BUCKET/$RESULTS/training/"
+gsutil -m -q cp data/raw/model/Model_C_*.pkl "gs://$BUCKET/$RESULTS/raw/model/"
+gsutil -m -q cp data/raw/model/Model_D_*.pkl "gs://$BUCKET/$RESULTS/raw/model/"
 
 # Upload executed notebooks
 gsutil -q cp notebooks/05a_model_A_training.ipynb "gs://$BUCKET/$RESULTS/notebooks/"
 gsutil -q cp notebooks/05b_model_B_training.ipynb "gs://$BUCKET/$RESULTS/notebooks/"
+gsutil -q cp notebooks/05c_model_C_training.ipynb "gs://$BUCKET/$RESULTS/notebooks/"
+gsutil -q cp notebooks/05d_model_D_stacking.ipynb "gs://$BUCKET/$RESULTS/notebooks/"
+gsutil -q cp notebooks/06_model_comparison.ipynb "gs://$BUCKET/$RESULTS/notebooks/"
 
 # Signal completion
 echo "DONE" | gsutil -q cp - "gs://$BUCKET/$STAGING/DONE"
@@ -195,5 +231,5 @@ echo ""
 echo "  Manual cleanup (VM self-deletes, but just in case):"
 echo "    gcloud compute instances delete $VM_NAME --zone=$ZONE --quiet"
 echo ""
-echo "  Estimated time: 15-30 min (GPU) / 30-60 min (CPU)"
+echo "  Estimated time: 45-90 min (GPU) / 120-180 min (CPU)"
 echo "============================================================"

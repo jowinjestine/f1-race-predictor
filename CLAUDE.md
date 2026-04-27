@@ -12,9 +12,9 @@ Rules:
 - GPU detection: `src/f1_predictor/models/gpu.py` — supports NVIDIA CUDA and AMD ROCm
 - XGBoost GPU requires CUDA (forced to CPU on AMD ROCm)
 - LightGBM GPU uses OpenCL (works on both NVIDIA and AMD)
-- PyTorch uses HIP on ROCm — `torch.cuda.*` API works identically
 - DL models (GRU, FT-Transformer, MLP): `src/f1_predictor/models/architectures.py`
 - DL utilities (training loop, early stopping): `src/f1_predictor/models/dl_utils.py`
-- WSL2 setup: `bash scripts/setup_wsl_env.sh`
-- Local training: `bash scripts/run_training_wsl.sh`
-- GCE fallback: `bash scripts/run_training_remote.sh` (preserved, unchanged)
+- GCE training (primary): `bash scripts/run_training_remote.sh`
+- Fetch results: `bash scripts/fetch_training_results.sh`
+- WSL2 setup (deprecated): `bash scripts/setup_wsl_env.sh`
+- WSL2 training (deprecated): `bash scripts/run_training_wsl.sh`

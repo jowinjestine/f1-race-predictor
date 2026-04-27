@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # Download training results from GCS to local paths.
-# Run after the remote VM finishes Models A & B.
+# Run after the remote VM finishes all models (A, B, C, D) + comparison.
 #
 # Usage: bash scripts/fetch_training_results.sh
 # ---------------------------------------------------------------------------
@@ -12,26 +12,33 @@ BUCKET="f1-predictor-artifacts-jowin"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-echo ">>> Downloading Model A & B artifacts from GCS..."
+echo ">>> Downloading all model artifacts from GCS..."
 
-mkdir -p data/training data/raw/model
+mkdir -p data/training data/raw/model notebooks
 
 # Prediction parquets
 gsutil -m cp "gs://$BUCKET/data/training/model_A_*.parquet" data/training/
 gsutil -m cp "gs://$BUCKET/data/training/model_B_*.parquet" data/training/
+gsutil -m cp "gs://$BUCKET/data/training/model_C_*.parquet" data/training/
+gsutil -m cp "gs://$BUCKET/data/training/model_D_*.parquet" data/training/
 
 # Model pickles
 gsutil -m cp "gs://$BUCKET/data/raw/model/Model_A_*.pkl" data/raw/model/
 gsutil -m cp "gs://$BUCKET/data/raw/model/Model_B_*.pkl" data/raw/model/
+gsutil -m cp "gs://$BUCKET/data/raw/model/Model_C_*.pkl" data/raw/model/
+gsutil -m cp "gs://$BUCKET/data/raw/model/Model_D_*.pkl" data/raw/model/
 
 # Executed notebooks
 gsutil -m cp "gs://$BUCKET/data/notebooks/05a_model_A_training.ipynb" notebooks/
 gsutil -m cp "gs://$BUCKET/data/notebooks/05b_model_B_training.ipynb" notebooks/
+gsutil -m cp "gs://$BUCKET/data/notebooks/05c_model_C_training.ipynb" notebooks/
+gsutil -m cp "gs://$BUCKET/data/notebooks/05d_model_D_stacking.ipynb" notebooks/
+gsutil -m cp "gs://$BUCKET/data/notebooks/06_model_comparison.ipynb" notebooks/
 
 echo ""
 echo ">>> Downloaded artifacts:"
-ls -la data/training/model_A_* data/training/model_B_* 2>/dev/null || echo "  (no prediction parquets found)"
-ls -la data/raw/model/Model_A_* data/raw/model/Model_B_* 2>/dev/null || echo "  (no model pickles found)"
+ls -la data/training/model_*.parquet 2>/dev/null | wc -l | xargs -I{} echo "  {} prediction parquets"
+ls -la data/raw/model/Model_*.pkl 2>/dev/null | wc -l | xargs -I{} echo "  {} model pickles"
 
 echo ""
 echo ">>> Results saved to:"
@@ -39,5 +46,4 @@ echo "  Predictions: data/training/"
 echo "  Models:      data/raw/model/"
 echo "  Notebooks:   notebooks/"
 echo ""
-echo ">>> Next step: Run Model D locally"
-echo "  uv run jupyter nbconvert --to notebook --execute --ExecutePreprocessor.timeout=3600 notebooks/05d_model_D_stacking.ipynb --output 05d_model_D_stacking.ipynb"
+echo ">>> All training complete. Review notebooks for results."
