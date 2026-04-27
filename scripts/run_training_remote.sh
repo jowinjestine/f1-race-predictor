@@ -91,6 +91,8 @@ WORK="/opt/f1-training"
 
 mkdir -p "$WORK" && cd "$WORK"
 
+export HOME="${HOME:-/root}"
+
 # Install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
