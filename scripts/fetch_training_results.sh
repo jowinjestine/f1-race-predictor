@@ -21,18 +21,21 @@ gcloud storage cp "gs://$BUCKET/data/training/model_A_*.parquet" data/training/
 gcloud storage cp "gs://$BUCKET/data/training/model_B_*.parquet" data/training/
 gcloud storage cp "gs://$BUCKET/data/training/model_C_*.parquet" data/training/
 gcloud storage cp "gs://$BUCKET/data/training/model_D_*.parquet" data/training/
+gcloud storage cp "gs://$BUCKET/data/training/model_E_*.parquet" data/training/
 
 # Model pickles
 gcloud storage cp "gs://$BUCKET/data/raw/model/Model_A_*.pkl" data/raw/model/
 gcloud storage cp "gs://$BUCKET/data/raw/model/Model_B_*.pkl" data/raw/model/
 gcloud storage cp "gs://$BUCKET/data/raw/model/Model_C_*.pkl" data/raw/model/
 gcloud storage cp "gs://$BUCKET/data/raw/model/Model_D_*.pkl" data/raw/model/
+gcloud storage cp "gs://$BUCKET/data/raw/model/Model_E_*.pkl" data/raw/model/
 
 # Executed notebooks
 gcloud storage cp "gs://$BUCKET/data/notebooks/05a_model_A_training.ipynb" notebooks/
 gcloud storage cp "gs://$BUCKET/data/notebooks/05b_model_B_training.ipynb" notebooks/
 gcloud storage cp "gs://$BUCKET/data/notebooks/05c_model_C_training.ipynb" notebooks/
 gcloud storage cp "gs://$BUCKET/data/notebooks/05d_model_D_stacking.ipynb" notebooks/
+gcloud storage cp "gs://$BUCKET/data/notebooks/05e_model_E_rich_stacking.ipynb" notebooks/
 gcloud storage cp "gs://$BUCKET/data/notebooks/06_model_comparison.ipynb" notebooks/
 
 echo ""

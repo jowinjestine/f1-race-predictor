@@ -1,5 +1,5 @@
 # ruff: noqa: RUF001  — notebook display strings use Unicode
-"""Generate training notebooks for Models A, B, C, D."""
+"""Generate training notebooks for Models A, B, C, D, E."""
 
 import json
 import uuid
@@ -1403,6 +1403,533 @@ for _, row in final_df.iterrows():
 
 
 # ---------------------------------------------------------------------------
+# Model E notebook — Rich Feature Stacking
+# ---------------------------------------------------------------------------
+
+def make_model_e() -> list[dict]:
+    cells = [
+        md("# 05e — Model E Training: Rich Feature Stacking\n\n"
+           "Combines **Model A's lap-level richness** with "
+           "**Model D's stacking stability**.\n\n"
+           "Key improvements over Model D (which uses only 3 prediction features):\n"
+           "- **Rich lap-level aggregations** — mean, std, last-5, min, range "
+           "(not just last lap)\n"
+           "- **Pre-race context** — grid position and qualifying gap\n"
+           "- **Auto-selection** — picks the best variant of each base model\n\n"
+           "| Feature Source | Count | Signal |\n"
+           "|---|---|---|\n"
+           "| Model A lap-level agg | 6 | In-race position trajectory |\n"
+           "| Model B lap-level agg | 4 | Long-term form trajectory |\n"
+           "| Model C prediction | 1 | Pre-race baseline |\n"
+           "| Race features | 2 | Grid position, qualifying pace |\n"
+           "| **Total** | **13** | |"),
+        md("## 0. Setup"),
+        code(CHDIR),
+        code("""\
+import pickle
+import warnings
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import optuna
+from scipy.stats import spearmanr
+from sklearn.linear_model import ElasticNetCV, LassoCV, RidgeCV
+from sklearn.metrics import (
+    mean_absolute_error, mean_squared_error, median_absolute_error,
+    max_error, r2_score, mean_absolute_percentage_error,
+)
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+import xgboost as xgb
+import lightgbm as lgb
+
+from f1_predictor.features.splits import LeaveOneSeasonOut
+from f1_predictor.data.storage import (
+    load_from_gcs_or_local,
+    load_training_parquet,
+    save_training_parquet,
+    save_model_pickle as gcs_save_model_pickle,
+    sync_training_from_gcs,
+)
+
+warnings.filterwarnings("ignore", category=UserWarning)
+optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+TRAINING_DIR = Path("data/training")
+MODEL_DIR = Path("data/raw/model")
+TRAINING_DIR.mkdir(parents=True, exist_ok=True)
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+for mt in ["A", "B", "C"]:
+    sync_training_from_gcs(mt, TRAINING_DIR)
+print("Synced base model artifacts from GCS.")"""),
+        code('''\
+merge_key = ["season", "round", "driver_abbrev"]
+
+NAN_TOLERANT_E = {"XGBoost_shallow", "LightGBM_shallow"}
+
+
+def wrap_imputer(model):
+    return Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("model", model),
+    ])
+
+
+def cv_evaluate(model, X, y, splitter, groups):
+    """CV evaluation returning fold and mean metrics."""
+    fold_rmse, fold_mae = [], []
+    for train_idx, val_idx in splitter.split(groups):
+        import sklearn.base
+        m = sklearn.base.clone(model)
+        m.fit(X.iloc[train_idx], y.iloc[train_idx])
+        preds = m.predict(X.iloc[val_idx])
+        fold_rmse.append(np.sqrt(mean_squared_error(
+            y.iloc[val_idx], preds)))
+        fold_mae.append(mean_absolute_error(y.iloc[val_idx], preds))
+    return {
+        "fold_rmse": fold_rmse, "fold_mae": fold_mae,
+        "mean_rmse": np.mean(fold_rmse),
+        "std_rmse": np.std(fold_rmse),
+        "mean_mae": np.mean(fold_mae),
+    }
+
+
+def aggregate_lap_rich(df, prefix):
+    """Compute rich aggregation stats from lap-level predictions."""
+    df = df.sort_values(merge_key + ["lap_number"])
+    grp = df.groupby(merge_key)["y_pred"]
+
+    last_vals = grp.last()
+    mean_vals = grp.mean()
+    std_vals = grp.std().fillna(0)
+    min_vals = grp.min()
+    max_vals = grp.max()
+
+    agg = pd.DataFrame({
+        f"{prefix}_last": last_vals,
+        f"{prefix}_mean": mean_vals,
+        f"{prefix}_std": std_vals,
+        f"{prefix}_min": min_vals,
+        f"{prefix}_range": max_vals - min_vals,
+    }).reset_index()
+
+    last5 = (df.groupby(merge_key).tail(5)
+             .groupby(merge_key)["y_pred"].mean()
+             .rename(f"{prefix}_last5").reset_index())
+    agg = agg.merge(last5, on=merge_key)
+
+    y_true = (df.groupby(merge_key)["y_true"]
+              .last().rename("y_true").reset_index())
+    agg = agg.merge(y_true, on=merge_key)
+    return agg
+
+
+def select_best_variant(model_type, is_lap_level=False):
+    """Pick best variant by validation RMSE (race-level)."""
+    files = sorted(TRAINING_DIR.glob(
+        f"model_{model_type}_*_Validation.parquet"))
+    best_name, best_rmse = None, float("inf")
+    for f in files:
+        stem = (f.stem
+                .replace(f"model_{model_type}_", "")
+                .replace("_Validation", ""))
+        df = pd.read_parquet(f)
+        if is_lap_level and "lap_number" in df.columns:
+            df = df.sort_values(merge_key + ["lap_number"])
+            df = df.groupby(merge_key).tail(1)
+        rmse = np.sqrt(mean_squared_error(df["y_true"], df["y_pred"]))
+        if rmse < best_rmse:
+            best_rmse = rmse
+            best_name = stem
+    return best_name, best_rmse'''),
+        md("## 1. Auto-Select Best Base Model Variants"),
+        code("""\
+best_A, rmse_A = select_best_variant("A", is_lap_level=True)
+best_B, rmse_B = select_best_variant("B", is_lap_level=True)
+best_C, rmse_C = select_best_variant("C", is_lap_level=False)
+
+print(f"Best Model A variant: {best_A} (val RMSE={rmse_A:.4f})")
+print(f"Best Model B variant: {best_B} (val RMSE={rmse_B:.4f})")
+print(f"Best Model C variant: {best_C} (val RMSE={rmse_C:.4f})")"""),
+        md("## 2. Build Rich Meta-Features\n\n"
+           "Extract 6 statistics from Model A's lap-level predictions, "
+           "4 from Model B, 1 from Model C."),
+        code("""\
+df_A = load_training_parquet(
+    f"model_A_{best_A}_Validation.parquet", TRAINING_DIR)
+df_B = load_training_parquet(
+    f"model_B_{best_B}_Validation.parquet", TRAINING_DIR)
+print(f"Model A laps: {len(df_A):,}, Model B laps: {len(df_B):,}")
+
+agg_A = aggregate_lap_rich(df_A, "A")
+print(f"Model A race-level: {len(agg_A)} rows, features: "
+      f"{[c for c in agg_A.columns if c.startswith('A_')]}")
+
+agg_B = aggregate_lap_rich(df_B, "B")
+B_keep = [c for c in agg_B.columns
+          if c.startswith("B_") and
+          any(s in c for s in ["last", "mean", "std", "last5"])]
+agg_B = agg_B[merge_key + B_keep]
+print(f"Model B race-level: {len(agg_B)} rows, features: {B_keep}")
+
+df_C = load_training_parquet(
+    f"model_C_{best_C}_Validation.parquet", TRAINING_DIR)
+df_C = df_C.rename(
+    columns={"y_pred": "C_pred"})[merge_key + ["C_pred"]]
+print(f"Model C: {len(df_C)} rows")"""),
+        md("## 3. Merge + Pre-Race Context Features"),
+        code("""\
+base = agg_A.merge(agg_B, on=merge_key, how="left")
+base = base.merge(df_C, on=merge_key, how="left")
+
+race_feat = load_from_gcs_or_local(
+    "data/processed/race/features_race.parquet",
+    Path("data/processed/race/features_race.parquet"),
+)
+prerace_cols = ["grid_position", "quali_delta_to_pole"]
+race_merge = race_feat[merge_key + prerace_cols].copy()
+base = base.merge(race_merge, on=merge_key, how="left")
+
+base = base.dropna(subset=["y_true"]).reset_index(drop=True)
+y_all = base["y_true"]
+groups_all = base["season"].values
+
+FEATURE_COLS = [c for c in base.columns
+                if c not in merge_key + ["y_true"]]
+X_all = base[FEATURE_COLS]
+
+print(f"Meta-feature matrix: {base.shape}")
+print(f"Features ({len(FEATURE_COLS)}): {FEATURE_COLS}")
+print(f"Seasons: {sorted(base['season'].unique())}")
+print(f"NaN counts:\\n{base[FEATURE_COLS].isna().sum()}")"""),
+        md("## 4. CV Splitter"),
+        code("""\
+available_seasons = sorted(base["season"].unique())
+val_seasons = [s for s in available_seasons if s != 2023]
+splitter = LeaveOneSeasonOut(
+    val_seasons=val_seasons, test_season=2023)
+print(f"Val seasons: {val_seasons}, Test: 2023")
+print(f"CV folds: {splitter.get_n_splits()}")"""),
+        md("## 5. Screen Meta-Learners"),
+        code("""\
+meta_candidates = [
+    ("RidgeCV", wrap_imputer(RidgeCV())),
+    ("LassoCV", wrap_imputer(
+        LassoCV(random_state=42, max_iter=5000))),
+    ("ElasticNetCV", wrap_imputer(
+        ElasticNetCV(random_state=42, max_iter=5000))),
+    ("XGBoost_shallow", xgb.XGBRegressor(
+        n_estimators=100, max_depth=3,
+        random_state=42, verbosity=0)),
+    ("LightGBM_shallow", lgb.LGBMRegressor(
+        n_estimators=100, max_depth=3,
+        random_state=42, verbose=-1)),
+]
+
+screen_rows = []
+for name, model in meta_candidates:
+    result = cv_evaluate(model, X_all, y_all, splitter, groups_all)
+    screen_rows.append({
+        "meta": name, "mean_rmse": result["mean_rmse"],
+        "std_rmse": result["std_rmse"],
+    })
+    print(f"  {name}: RMSE={result['mean_rmse']:.4f} "
+          f"+/- {result['std_rmse']:.4f}")
+
+screen_df = pd.DataFrame(screen_rows).sort_values("mean_rmse")
+print(f"\\nBest meta-learner: {screen_df.iloc[0]['meta']}")"""),
+        md("## 6. Optuna Tuning (Top 3 Meta-Learners)"),
+        code('''\
+E_MODEL_CLASSES = {
+    "RidgeCV": RidgeCV,
+    "LassoCV": LassoCV,
+    "ElasticNetCV": ElasticNetCV,
+    "XGBoost_shallow": xgb.XGBRegressor,
+    "LightGBM_shallow": lgb.LGBMRegressor,
+}
+
+
+def get_e_param_space(name, trial):
+    """Optuna param space for Model E meta-learners."""
+    if name == "XGBoost_shallow":
+        return dict(
+            n_estimators=trial.suggest_int("n_estimators", 50, 500),
+            max_depth=trial.suggest_int("max_depth", 2, 5),
+            learning_rate=trial.suggest_float(
+                "learning_rate", 0.01, 0.3, log=True),
+            subsample=trial.suggest_float("subsample", 0.6, 1.0),
+            colsample_bytree=trial.suggest_float(
+                "colsample_bytree", 0.5, 1.0),
+            reg_alpha=trial.suggest_float(
+                "reg_alpha", 1e-8, 10.0, log=True),
+            reg_lambda=trial.suggest_float(
+                "reg_lambda", 1e-8, 10.0, log=True),
+            random_state=42, verbosity=0,
+        )
+    elif name == "LightGBM_shallow":
+        return dict(
+            n_estimators=trial.suggest_int("n_estimators", 50, 500),
+            max_depth=trial.suggest_int("max_depth", 2, 5),
+            learning_rate=trial.suggest_float(
+                "learning_rate", 0.01, 0.3, log=True),
+            subsample=trial.suggest_float("subsample", 0.6, 1.0),
+            colsample_bytree=trial.suggest_float(
+                "colsample_bytree", 0.5, 1.0),
+            reg_alpha=trial.suggest_float(
+                "reg_alpha", 1e-8, 10.0, log=True),
+            reg_lambda=trial.suggest_float(
+                "reg_lambda", 1e-8, 10.0, log=True),
+            random_state=42, verbose=-1,
+        )
+    elif name == "RidgeCV":
+        alphas = [trial.suggest_float(
+            f"alpha_{i}", 0.001, 100.0, log=True) for i in range(5)]
+        return dict(alphas=sorted(alphas))
+    elif name == "LassoCV":
+        return dict(
+            n_alphas=trial.suggest_int("n_alphas", 50, 200),
+            random_state=42, max_iter=5000)
+    elif name == "ElasticNetCV":
+        return dict(
+            l1_ratio=[trial.suggest_float(
+                f"l1_{i}", 0.1, 0.9) for i in range(3)],
+            n_alphas=trial.suggest_int("n_alphas", 50, 200),
+            random_state=42, max_iter=5000,
+        )
+    return {}
+
+
+def reconstruct_e_params(name, best_params):
+    """Rebuild model constructor args from Optuna best_params."""
+    params = dict(best_params)
+    if name == "XGBoost_shallow":
+        params.update(random_state=42, verbosity=0)
+    elif name == "LightGBM_shallow":
+        params.update(random_state=42, verbose=-1)
+    elif name == "RidgeCV":
+        alpha_keys = sorted(k for k in params if k.startswith("alpha_"))
+        alphas = sorted(params.pop(k) for k in alpha_keys)
+        params["alphas"] = alphas
+    elif name == "LassoCV":
+        params.update(random_state=42, max_iter=5000)
+    elif name == "ElasticNetCV":
+        l1_keys = sorted(k for k in params if k.startswith("l1_"))
+        l1_ratio = [params.pop(k) for k in l1_keys]
+        params["l1_ratio"] = l1_ratio
+        params.update(random_state=42, max_iter=5000)
+    return params'''),
+        code("""\
+top3 = screen_df.head(3)["meta"].values.tolist()
+print(f"Tuning top 3: {top3}\\n")
+
+tune_results = []
+for meta_name in top3:
+    def objective(trial, _name=meta_name):
+        params = get_e_param_space(_name, trial)
+        model = E_MODEL_CLASSES[_name](**params)
+        if _name not in NAN_TOLERANT_E:
+            model = wrap_imputer(model)
+        return cv_evaluate(
+            model, X_all, y_all, splitter, groups_all
+        )["mean_rmse"]
+
+    study = optuna.create_study(
+        direction="minimize",
+        sampler=optuna.samplers.TPESampler(seed=42))
+    study.optimize(objective, n_trials=15, show_progress_bar=False)
+    tune_results.append({
+        "meta": meta_name, "best_rmse": study.best_value,
+        "best_params": study.best_params,
+    })
+    print(f"  {meta_name}: RMSE={study.best_value:.4f}")
+
+tune_df = (pd.DataFrame(tune_results)
+           .sort_values("best_rmse").reset_index(drop=True))
+best_meta = tune_df.iloc[0]
+print(f"\\nBest: {best_meta['meta']} "
+      f"RMSE={best_meta['best_rmse']:.4f}")"""),
+        md("## 7. Test Set Evaluation"),
+        code("""\
+train_idx, test_idx = splitter.get_test_split(groups_all)
+X_train = X_all.iloc[train_idx]
+X_test = X_all.iloc[test_idx]
+y_train = y_all.iloc[train_idx]
+y_test = y_all.iloc[test_idx]
+id_train = base[merge_key].iloc[train_idx]
+id_test = base[merge_key].iloc[test_idx]
+
+print(f"Train: {len(train_idx)}, Test: {len(test_idx)}")
+print(f"Test season: "
+      f"{sorted(base['season'].iloc[test_idx].unique())}\\n")
+
+test_results = []
+for _, row in tune_df.iterrows():
+    params = reconstruct_e_params(row["meta"], row["best_params"])
+    model = E_MODEL_CLASSES[row["meta"]](**params)
+    if row["meta"] not in NAN_TOLERANT_E:
+        model = wrap_imputer(model)
+    model.fit(X_train, y_train)
+    preds = model.predict(X_test)
+
+    rmse = np.sqrt(mean_squared_error(y_test, preds))
+    mae = mean_absolute_error(y_test, preds)
+    r2 = r2_score(y_test, preds)
+    med_ae = median_absolute_error(y_test, preds)
+    mx_err = max_error(y_test, preds)
+    mape = mean_absolute_percentage_error(y_test, preds) * 100
+    w1 = np.mean(np.abs(y_test.values - preds) <= 1.0) * 100
+    w3 = np.mean(np.abs(y_test.values - preds) <= 3.0) * 100
+
+    test_with_preds = base.iloc[test_idx][merge_key].copy()
+    test_with_preds["y_true"] = y_test.values
+    test_with_preds["y_pred"] = preds
+    spear_vals = []
+    for _, grp in test_with_preds.groupby(["season", "round"]):
+        if (len(grp) >= 3
+                and grp["y_true"].std() > 0
+                and grp["y_pred"].std() > 0):
+            spear_vals.append(
+                spearmanr(grp["y_true"], grp["y_pred"]).statistic)
+    spear = np.mean(spear_vals) if spear_vals else np.nan
+
+    test_results.append({
+        "Meta": row["meta"], "Val_RMSE": row["best_rmse"],
+        "Test_RMSE": rmse, "MAE": mae, "R2": r2,
+        "Median_AE": med_ae, "Max_Error": mx_err,
+        "MAPE": mape, "Within_1": w1, "Within_3": w3,
+        "Spearman": spear,
+        "Overfit_Gap": rmse - row["best_rmse"],
+    })
+    print(f"  {row['meta']:20s}  RMSE={rmse:.4f}  "
+          f"R2={r2:.4f}  Spearman={spear:.4f}  "
+          f"Within-3={w3:.1f}%")
+
+test_df = (pd.DataFrame(test_results)
+           .sort_values("Test_RMSE").reset_index(drop=True))
+test_df"""),
+        md("## 8. Compare to Models A and D"),
+        code("""\
+best_E = test_df.iloc[0]
+print("=" * 70)
+print("MODEL E vs A vs D (Test Set)")
+print("=" * 70)
+
+ref_A = {"RMSE": 3.1028, "R2": 0.6743,
+         "Spearman": 0.9037, "Within_3": 70.3}
+ref_D = {"RMSE": 3.1803, "R2": 0.6946,
+         "Spearman": 0.8477, "Within_3": 73.6}
+
+for metric, fmt in [("RMSE", ".4f"), ("R2", ".4f"),
+                    ("Spearman", ".4f"), ("Within_3", ".1f")]:
+    e_key = "Test_RMSE" if metric == "RMSE" else metric
+    e_val = best_E[e_key]
+    a_val = ref_A[metric]
+    d_val = ref_D[metric]
+    sfx = "%" if metric == "Within_3" else ""
+    print(f"  {metric:12s}  A={a_val:{fmt}}{sfx}  "
+          f"D={d_val:{fmt}}{sfx}  E={e_val:{fmt}}{sfx}")
+
+print(f"\\nModel E meta-learner: {best_E['Meta']}")
+print(f"Overfit gap: {best_E['Overfit_Gap']:.4f}")"""),
+        md("## 9. Feature Importance"),
+        code("""\
+params = reconstruct_e_params(
+    best_meta["meta"], best_meta["best_params"])
+final_model = E_MODEL_CLASSES[best_meta["meta"]](**params)
+if best_meta["meta"] not in NAN_TOLERANT_E:
+    final_model = wrap_imputer(final_model)
+final_model.fit(X_train, y_train)
+
+try:
+    if hasattr(final_model, "feature_importances_"):
+        importances = final_model.feature_importances_
+    elif hasattr(final_model, "named_steps"):
+        inner = final_model.named_steps["model"]
+        if hasattr(inner, "feature_importances_"):
+            importances = inner.feature_importances_
+        elif hasattr(inner, "coef_"):
+            importances = np.abs(inner.coef_)
+        else:
+            importances = None
+    else:
+        importances = None
+
+    if importances is not None:
+        fi_df = pd.DataFrame({
+            "Feature": FEATURE_COLS,
+            "Importance": importances,
+        }).sort_values("Importance", ascending=False)
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.barh(range(len(fi_df)),
+                fi_df["Importance"].values, color="#1976D2")
+        ax.set_yticks(range(len(fi_df)))
+        ax.set_yticklabels(fi_df["Feature"].values)
+        ax.set_xlabel("Importance")
+        ax.set_title(
+            f"Model E Feature Importance ({best_meta['meta']})")
+        ax.invert_yaxis()
+        plt.tight_layout()
+        plt.show()
+
+        print("Feature ranking:")
+        for _, row in fi_df.iterrows():
+            print(f"  {row['Feature']:25s}  "
+                  f"{row['Importance']:.4f}")
+except Exception as e:
+    print(f"Could not extract feature importance: {e}")"""),
+        md("## 10. Save Artifacts"),
+        code("""\
+for _, row in tune_df.iterrows():
+    params = reconstruct_e_params(row["meta"], row["best_params"])
+    model = E_MODEL_CLASSES[row["meta"]](**params)
+    if row["meta"] not in NAN_TOLERANT_E:
+        model = wrap_imputer(model)
+    model.fit(X_train, y_train)
+
+    model_tag = row["meta"]
+    for split_name, X_s, y_s, id_s in [
+        ("Training", X_train, y_train, id_train),
+        ("Test", X_test, y_test, id_test),
+    ]:
+        out = id_s.copy()
+        out["y_true"] = y_s.values
+        out["y_pred"] = model.predict(X_s)
+        fname = f"model_E_{model_tag}_{split_name}.parquet"
+        uri = save_training_parquet(out, fname, TRAINING_DIR)
+        print(f"  Saved {fname} -> {uri}")
+
+    pkl_name = f"Model_E_{model_tag}.pkl"
+    uri = gcs_save_model_pickle(model, pkl_name, MODEL_DIR)
+    print(f"  Saved {pkl_name} -> {uri}")
+
+print("\\nDone! All Model E artifacts saved.")"""),
+        md("## Summary"),
+        code("""\
+print("=" * 70)
+print("MODEL E (RICH FEATURE STACKING) COMPLETE")
+print("=" * 70)
+print(f"\\nBase models: A={best_A}, B={best_B}, C={best_C}")
+print(f"Meta-features: {len(FEATURE_COLS)}")
+for f in FEATURE_COLS:
+    print(f"  - {f}")
+print(f"\\nResults (test set):")
+for _, row in test_df.iterrows():
+    print(f"  {row['Meta']:20s}  RMSE={row['Test_RMSE']:.4f}  "
+          f"R2={row['R2']:.4f}  Spearman={row['Spearman']:.4f}  "
+          f"Within-3={row['Within_3']:.1f}%")
+best = test_df.iloc[0]
+print(f"\\nBest: {best['Meta']}  RMSE={best['Test_RMSE']:.4f}  "
+      f"Within-3={best['Within_3']:.1f}%  "
+      f"Spearman={best['Spearman']:.4f}")"""),
+    ]
+    return cells
+
+
+# ---------------------------------------------------------------------------
 # Notebook 06: Model Comparison
 # ---------------------------------------------------------------------------
 
@@ -1452,7 +1979,7 @@ TRAINING_DIR = Path("data/training")
 TRAINING_DIR.mkdir(parents=True, exist_ok=True)
 
 # Sync all model artifacts from GCS
-for mt in ["A", "B", "C", "D"]:
+for mt in ["A", "B", "C", "D", "E"]:
     sync_training_from_gcs(mt, TRAINING_DIR)
 print("Synced all training artifacts from GCS.")"""),
         md("## 1. Load All Prediction Parquets"),
@@ -1789,6 +2316,7 @@ def main():
         "05b_model_B_training.ipynb": make_model_b(),
         "05c_model_C_training.ipynb": make_model_c(),
         "05d_model_D_stacking.ipynb": make_model_d(),
+        "05e_model_E_rich_stacking.ipynb": make_model_e(),
         "06_model_comparison.ipynb": make_model_comparison(),
     }
     for name, cells in notebooks.items():

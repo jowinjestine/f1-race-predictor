@@ -156,6 +156,13 @@ uv run jupyter nbconvert --to notebook --execute \
     notebooks/05d_model_D_stacking.ipynb \
     --output 05d_model_D_stacking.ipynb 2>&1 || true
 
+# Run Model E (depends on A, B, C outputs)
+echo "=== Running Model E: $(date) ==="
+uv run jupyter nbconvert --to notebook --execute \
+    --ExecutePreprocessor.timeout=3600 \
+    notebooks/05e_model_E_rich_stacking.ipynb \
+    --output 05e_model_E_rich_stacking.ipynb 2>&1 || true
+
 # Run comparison notebook
 echo "=== Running Comparison: $(date) ==="
 uv run jupyter nbconvert --to notebook --execute \
@@ -173,12 +180,15 @@ gsutil -m -q cp data/training/model_C_*.parquet "gs://$BUCKET/$RESULTS/training/
 gsutil -m -q cp data/training/model_D_*.parquet "gs://$BUCKET/$RESULTS/training/"
 gsutil -m -q cp data/raw/model/Model_C_*.pkl "gs://$BUCKET/$RESULTS/raw/model/"
 gsutil -m -q cp data/raw/model/Model_D_*.pkl "gs://$BUCKET/$RESULTS/raw/model/"
+gsutil -m -q cp data/training/model_E_*.parquet "gs://$BUCKET/$RESULTS/training/"
+gsutil -m -q cp data/raw/model/Model_E_*.pkl "gs://$BUCKET/$RESULTS/raw/model/"
 
 # Upload executed notebooks
 gsutil -q cp notebooks/05a_model_A_training.ipynb "gs://$BUCKET/$RESULTS/notebooks/"
 gsutil -q cp notebooks/05b_model_B_training.ipynb "gs://$BUCKET/$RESULTS/notebooks/"
 gsutil -q cp notebooks/05c_model_C_training.ipynb "gs://$BUCKET/$RESULTS/notebooks/"
 gsutil -q cp notebooks/05d_model_D_stacking.ipynb "gs://$BUCKET/$RESULTS/notebooks/"
+gsutil -q cp notebooks/05e_model_E_rich_stacking.ipynb "gs://$BUCKET/$RESULTS/notebooks/"
 gsutil -q cp notebooks/06_model_comparison.ipynb "gs://$BUCKET/$RESULTS/notebooks/"
 
 # Signal completion
