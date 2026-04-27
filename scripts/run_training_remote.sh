@@ -15,17 +15,16 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 PROJECT="jowin-personal-2026"
-ZONE="us-central1-a"
+ZONE="${ZONE:-us-central1-a}"
 BUCKET="f1-predictor-artifacts-jowin"
 VM_NAME="f1-training-$(date +%s)"
 STAGING_PREFIX="staging/training-run"
 RESULTS_PREFIX="data"
 
-# Default: GPU. Use --cpu flag to skip GPU.
+# Default: L4 GPU. Use --t4 for T4, --cpu for CPU-only.
 USE_GPU=true
-MACHINE_TYPE="n1-standard-8"
-ACCELERATOR="--accelerator=type=nvidia-tesla-t4,count=1"
-IMAGE_FAMILY="common-cu124-debian-11"
+GPU_TYPE="${GPU_TYPE:-l4}"
+IMAGE_FAMILY="common-cu129-ubuntu-2204-nvidia-580"
 IMAGE_PROJECT="deeplearning-platform-release"
 
 if [[ "${1:-}" == "--cpu" ]]; then
@@ -35,8 +34,14 @@ if [[ "${1:-}" == "--cpu" ]]; then
     IMAGE_FAMILY="debian-12"
     IMAGE_PROJECT="debian-cloud"
     echo ">>> CPU-only mode (c2-standard-16, 16 vCPUs)"
+elif [[ "$GPU_TYPE" == "t4" || "${1:-}" == "--t4" ]]; then
+    MACHINE_TYPE="n1-standard-8"
+    ACCELERATOR="--accelerator=type=nvidia-tesla-t4,count=1"
+    echo ">>> GPU mode (n1-standard-8 + T4, 16GB VRAM)"
 else
-    echo ">>> GPU mode (n1-standard-8 + T4)"
+    MACHINE_TYPE="g2-standard-8"
+    ACCELERATOR="--accelerator=type=nvidia-l4,count=1"
+    echo ">>> GPU mode (g2-standard-8 + L4, 24GB VRAM)"
 fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -55,18 +60,18 @@ tar czf "$TARBALL" \
     -C "$REPO_ROOT" .
 
 echo ">>> Uploading to gs://$BUCKET/$STAGING_PREFIX/"
-gsutil -q cp "$TARBALL" "gs://$BUCKET/$STAGING_PREFIX/repo.tar.gz"
+gcloud storage cp "$TARBALL" "gs://$BUCKET/$STAGING_PREFIX/repo.tar.gz" --quiet
 
 # Upload data files (notebooks load from GCS, but also provide local fallback)
-gsutil -q cp \
+gcloud storage cp \
     data/processed/lap_tyre/features_laps_tyre.parquet \
-    "gs://$BUCKET/$STAGING_PREFIX/features_laps_tyre.parquet"
-gsutil -q cp \
+    "gs://$BUCKET/$STAGING_PREFIX/features_laps_tyre.parquet" --quiet
+gcloud storage cp \
     data/processed/lap_notyre/features_laps_notyre.parquet \
-    "gs://$BUCKET/$STAGING_PREFIX/features_laps_notyre.parquet"
-gsutil -q cp \
+    "gs://$BUCKET/$STAGING_PREFIX/features_laps_notyre.parquet" --quiet
+gcloud storage cp \
     data/processed/race/features_race.parquet \
-    "gs://$BUCKET/$STAGING_PREFIX/features_race.parquet"
+    "gs://$BUCKET/$STAGING_PREFIX/features_race.parquet" --quiet
 
 echo ">>> Staging complete."
 
@@ -114,7 +119,7 @@ uv pip install xgboost lightgbm optuna
 if nvidia-smi > /dev/null 2>&1; then
     echo "GPU detected — installing GPU-enabled packages"
     uv pip install xgboost --upgrade
-    uv pip install torch --index-url https://download.pytorch.org/whl/cu124
+    uv pip install torch --index-url https://download.pytorch.org/whl/cu126
     uv pip install rtdl-revisiting-models
 fi
 
