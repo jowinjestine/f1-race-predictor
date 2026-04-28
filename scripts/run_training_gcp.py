@@ -195,13 +195,25 @@ uv sync --frozen --group dev
 uv pip install xgboost lightgbm optuna
 {extra_pip_line}
 
-if nvidia-smi > /dev/null 2>&1; then
+echo ">>> Waiting for GPU driver (up to 5 min)..."
+GPU_READY=false
+for i in $(seq 1 60); do
+    if nvidia-smi > /dev/null 2>&1; then
+        GPU_READY=true
+        break
+    fi
+    echo "    nvidia-smi not ready yet (attempt $i/60)..."
+    sleep 5
+done
+
+if [ "$GPU_READY" = true ]; then
     echo ">>> GPU detected — installing PyTorch CUDA"
     nvidia-smi
     uv pip install torch --index-url https://download.pytorch.org/whl/cu124
     uv pip install xgboost --upgrade
 else
-    echo ">>> No GPU — installing CPU PyTorch"
+    echo ">>> No GPU after 5 min — installing CPU PyTorch"
+    slack_notify ":warning: *GPU driver failed to load* on $(hostname) — falling back to CPU"
     uv pip install torch --index-url https://download.pytorch.org/whl/cpu
 fi
 
@@ -314,6 +326,7 @@ def create_vm(model_keys: list[str], *, cpu: bool = False, gpu: str = "l4") -> t
             metadata=compute_v1.Metadata(
                 items=[
                     compute_v1.Items(key="startup-script", value=startup_script),
+                    compute_v1.Items(key="install-nvidia-driver", value="True"),
                 ]
             ),
             service_accounts=[
