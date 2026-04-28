@@ -408,6 +408,172 @@ def save_model_pkl(model, model_type, model_name):
     print(f"  Saved {fname} -> {uri}")'''
 
 
+PROGRESS_LOGGER = """\
+import sys
+from datetime import datetime, timezone
+
+class ProgressLogger:
+    def __init__(self, model_key, log_dir="/var/log"):
+        self.model_key = model_key
+        self.log_path = f"{{log_dir}}/f1-model-{{model_key.lower()}}-progress.log"
+        try:
+            self._f = open(self.log_path, "a", buffering=1)
+        except OSError:
+            self._f = None
+
+    def log(self, msg):
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        line = f"[Model {{self.model_key}}] [{{ts}}] {{msg}}"
+        print(line, flush=True)
+        if self._f:
+            self._f.write(line + "\\n")
+            self._f.flush()
+
+    def round_header(self, round_num, desc):
+        self.log(f"========== ROUND {{round_num}}: {{desc}} ==========")
+
+    def screening(self, name, idx, total, rmse=None, error=None):
+        if error:
+            self.log(f"Screening {{idx}}/{{total}} {{name}} -- FAILED: {{error}}")
+        else:
+            self.log(f"Screening {{idx}}/{{total}} {{name}} -- RMSE: {{rmse:.6f}}")
+
+    def optuna_trial(self, name, trial_num, total, rmse, best_rmse):
+        self.log(f"{{name}} trial {{trial_num}}/{{total}} -- RMSE: {{rmse:.6f}} (best: {{best_rmse:.6f}})")
+
+    def model_complete(self, name, round_num, rmse):
+        self.log(f"{{name}} Round {{round_num}} COMPLETE -- best RMSE: {{rmse:.6f}}")
+
+    def close(self):
+        if self._f:
+            self._f.close()
+
+progress = ProgressLogger("{model_key}")"""
+
+
+SLACK_NOTIFIER = """\
+import json as _json_slack
+import os as _os_slack
+from urllib.request import Request as _SlackReq, urlopen as _slack_urlopen
+
+class SlackNotifier:
+    def __init__(self, model_key):
+        self.model_key = model_key
+        self.webhook_url = _os_slack.environ.get("SLACK_WEBHOOK_URL", "")
+        self.enabled = bool(self.webhook_url)
+
+    def send(self, text):
+        if not self.enabled:
+            return
+        try:
+            data = _json_slack.dumps({{"text": text}}).encode()
+            req = _SlackReq(self.webhook_url, data=data,
+                            headers={{"Content-Type": "application/json"}})
+            _slack_urlopen(req, timeout=10)
+        except Exception:
+            pass
+
+    def round_start(self, round_num, desc, n_models):
+        self.send(f":racing_car: *Model {{self.model_key}} -- Round {{round_num}}*\\n{{desc}} ({{n_models}} models)")
+
+    def round_complete(self, round_num, summary):
+        self.send(f":checkered_flag: *Model {{self.model_key}} -- Round {{round_num}} complete*\\n{{summary}}")
+
+    def model_start(self):
+        self.send(f":rocket: *Model {{self.model_key}} training STARTED*")
+
+    def model_complete(self, best_model, best_rmse):
+        self.send(f":tada: *Model {{self.model_key}} training COMPLETE*\\nBest: {{best_model}} (RMSE: {{best_rmse:.6f}})")
+
+    def architecture_done(self, name, round_num, rmse):
+        self.send(f":gear: Model {{self.model_key}} R{{round_num}} -- {{name}} done (RMSE: {{rmse:.6f}})")
+
+    def error(self, context, error_msg):
+        self.send(f":rotating_light: *Model {{self.model_key}} ERROR* -- {{context}}: {{error_msg}}")
+
+slack = SlackNotifier("{model_key}")"""
+
+
+CHECKPOINT_MANAGER = """\
+import json as _json_ckpt
+import subprocess as _sp_ckpt
+from datetime import datetime as _dt_ckpt, timezone as _tz_ckpt
+from pathlib import Path as _Path_ckpt
+
+class CheckpointManager:
+    def __init__(self, model_key, local_base="/opt/f1-training/checkpoints",
+                 bucket="f1-predictor-artifacts-jowin",
+                 gcs_prefix="staging/training-run/checkpoints"):
+        self.model_key = model_key
+        self.local_dir = _Path_ckpt(local_base) / f"model_{{model_key}}"
+        self.local_dir.mkdir(parents=True, exist_ok=True)
+        self.gcs_prefix = f"gs://{{bucket}}/{{gcs_prefix}}/model_{{model_key}}"
+        self._sync_from_gcs()
+
+    def _sync_from_gcs(self):
+        try:
+            _sp_ckpt.run(
+                ["gsutil", "-m", "-q", "cp", "-r",
+                 f"{{self.gcs_prefix}}/*", str(self.local_dir) + "/"],
+                capture_output=True, timeout=60)
+        except Exception:
+            pass
+
+    def _upload(self, local_path):
+        name = _Path_ckpt(local_path).name
+        try:
+            _sp_ckpt.run(
+                ["gsutil", "-q", "cp", str(local_path),
+                 f"{{self.gcs_prefix}}/{{name}}"],
+                capture_output=True, timeout=30)
+        except Exception:
+            pass
+
+    def save_checkpoint(self, round_num, arch_name, rmse, best_params, **extra):
+        data = {{
+            "model_key": self.model_key,
+            "round": round_num,
+            "architecture": arch_name,
+            "rmse": rmse,
+            "best_params": best_params,
+            "timestamp": _dt_ckpt.now(_tz_ckpt.utc).isoformat(),
+            **extra,
+        }}
+        path = self.local_dir / f"round_{{round_num}}_{{arch_name}}.json"
+        path.write_text(_json_ckpt.dumps(data, indent=2, default=str))
+        self._upload(path)
+
+    def load_checkpoint(self, round_num, arch_name):
+        path = self.local_dir / f"round_{{round_num}}_{{arch_name}}.json"
+        if path.exists():
+            return _json_ckpt.loads(path.read_text())
+        return None
+
+    def get_completed(self, round_num):
+        result = {{}}
+        for p in sorted(self.local_dir.glob(f"round_{{round_num}}_*.json")):
+            if p.stem.endswith("_summary"):
+                continue
+            data = _json_ckpt.loads(p.read_text())
+            result[data["architecture"]] = data
+        return result
+
+    def save_round_summary(self, round_num, results_list, top_names):
+        data = {{"round": round_num, "results": results_list, "top_names": top_names,
+                "timestamp": _dt_ckpt.now(_tz_ckpt.utc).isoformat()}}
+        path = self.local_dir / f"round_{{round_num}}_summary.json"
+        path.write_text(_json_ckpt.dumps(data, indent=2, default=str))
+        self._upload(path)
+
+    def load_round_summary(self, round_num):
+        path = self.local_dir / f"round_{{round_num}}_summary.json"
+        if path.exists():
+            return _json_ckpt.loads(path.read_text())
+        return None
+
+ckpt = CheckpointManager("{model_key}")"""
+
+
 # ---------------------------------------------------------------------------
 # Model A notebook
 # ---------------------------------------------------------------------------
@@ -2351,6 +2517,10 @@ def make_model_g() -> list[dict]:
         code(CHDIR),
         code(IMPORTS),
         code(SAVE_ARTIFACTS),
+        code(PROGRESS_LOGGER.format(model_key="G")),
+        code(SLACK_NOTIFIER.format(model_key="G")),
+        code(CHECKPOINT_MANAGER.format(model_key="G")),
+        code("slack.model_start()\nprogress.log('Starting Model G training')"),
         md("## 1. Build Sequence Training Data"),
         code("""\
 from f1_predictor.features.simulation_features import (
@@ -2498,13 +2668,24 @@ def cv_evaluate_g(model, X_seq_full, y_full, splitter, groups):
 
 def screen_models_g(candidates, X_seq_full, y_full, splitter, groups):
     rows = []
-    for name, model in candidates.items():
+    completed = ckpt.get_completed(1)
+    total = len(candidates)
+    for idx, (name, model) in enumerate(candidates.items(), 1):
+        if name in completed:
+            cp = completed[name]
+            rows.append({"model": name, "mean_rmse": cp["rmse"],
+                         "std_rmse": cp.get("std_rmse", 0), "mean_mae": cp.get("mean_mae", 0)})
+            progress.log(f"Screening {idx}/{total} {name} -- RESUMED (RMSE: {cp['rmse']:.6f})")
+            continue
         try:
             result = cv_evaluate_g(model, X_seq_full, y_full, splitter, groups)
             rows.append({"model": name, **result})
-            print(f"  {name}: RMSE={result['mean_rmse']:.4f}")
+            progress.screening(name, idx, total, rmse=result["mean_rmse"])
+            ckpt.save_checkpoint(1, name, result["mean_rmse"], {},
+                                 std_rmse=result["std_rmse"], mean_mae=result["mean_mae"])
         except Exception as e:
-            print(f"  {name}: FAILED — {e}")
+            progress.screening(name, idx, total, error=str(e))
+            slack.error(f"R1 screening {name}", str(e))
     if not rows:
         raise RuntimeError("All candidates failed — check data for NaN or shape issues")
     return pd.DataFrame(rows).sort_values("mean_rmse").reset_index(drop=True)
@@ -2516,10 +2697,12 @@ def run_optuna_round_g(name, X_seq_full, y_full, splitter, groups, n_trials):
         ws = params.pop("window_size", MAX_WINDOW)
         model_cls = MODEL_CLASSES_G[name]
         model = model_cls(**params, window_size=ws)
-        # Slice sequences to candidate's window size
         X_sliced = slice_window(X_seq_full, ws)
         result = cv_evaluate_g(model, X_sliced, y_full, splitter, groups)
         return result["mean_rmse"]
+    def _trial_cb(study, trial):
+        if trial.value is not None:
+            progress.optuna_trial(name, trial.number + 1, n_trials, trial.value, study.best_value)
     study = optuna.create_study(
         direction="minimize",
         sampler=optuna.samplers.TPESampler(seed=42),
@@ -2527,12 +2710,17 @@ def run_optuna_round_g(name, X_seq_full, y_full, splitter, groups, n_trials):
     study.optimize(
         objective, n_trials=n_trials,
         catch=(Exception,), show_progress_bar=False,
+        callbacks=[_trial_cb],
     )
     return study.best_params, study.best_value"""),
         md("## 4. Round 1 — Screen Models"),
         code("""\
+progress.round_header(1, "Screen all candidates")
+slack.round_start(1, "Screening all candidates", len(get_candidates_g()))
 candidates = get_candidates_g()
 r1_results = screen_models_g(candidates, X_seq, y_seq, splitter, groups)
+ckpt.save_round_summary(1, r1_results.to_dict("records"), r1_results["model"].head(7).tolist())
+slack.round_complete(1, f"Best: {r1_results.iloc[0]['model']} (RMSE: {r1_results.iloc[0]['mean_rmse']:.6f})")
 r1_results[["model", "mean_rmse", "std_rmse", "mean_mae"]]"""),
         code("""\
 fig, ax = plt.subplots(figsize=(10, 5))
@@ -2543,38 +2731,78 @@ ax.invert_yaxis()
 plt.tight_layout()
 plt.show()"""),
         code("""\
-top7_names = r1_results["model"].head(7).tolist()
+r1_summary = ckpt.load_round_summary(1)
+if r1_summary:
+    top7_names = r1_summary["top_names"]
+else:
+    top7_names = r1_results["model"].head(7).tolist()
 print(f"Advancing to Round 2: {top7_names}")
-eliminated = r1_results["model"].iloc[7:].tolist()
+eliminated = [n for n in r1_results["model"].tolist() if n not in top7_names]
 print(f"Eliminated: {eliminated}")"""),
         md("## 5. Round 2 — Optuna (top 7, 10 trials each)"),
         code("""\
+progress.round_header(2, "Optuna HP tuning (top 7, 10 trials each)")
+slack.round_start(2, "Optuna HP tuning", len(top7_names))
 r2_results = []
-for name in top7_names:
-    print(f"Tuning {name}...")
-    best_params, best_rmse = run_optuna_round_g(
-        name, X_seq, y_seq, splitter, groups, n_trials=10)
-    r2_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
-    print(f"  Best RMSE: {best_rmse:.4f}")
+completed_r2 = ckpt.get_completed(2)
+for idx, name in enumerate(top7_names, 1):
+    if name in completed_r2:
+        cp = completed_r2[name]
+        r2_results.append({"model": name, "best_rmse": cp["rmse"], "best_params": cp["best_params"]})
+        progress.log(f"{name} -- RESUMED from checkpoint (RMSE: {cp['rmse']:.6f})")
+        continue
+    progress.log(f"Tuning {name} ({idx}/{len(top7_names)})...")
+    try:
+        best_params, best_rmse = run_optuna_round_g(
+            name, X_seq, y_seq, splitter, groups, n_trials=10)
+        r2_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
+        ckpt.save_checkpoint(2, name, best_rmse, best_params)
+        progress.model_complete(name, 2, best_rmse)
+        slack.architecture_done(name, 2, best_rmse)
+    except Exception as e:
+        progress.log(f"{name} FAILED in Round 2: {e}")
+        slack.error(f"R2 {name}", str(e))
 
 r2_df = pd.DataFrame(r2_results).sort_values("best_rmse").reset_index(drop=True)
+ckpt.save_round_summary(2, r2_results, r2_df["model"].head(5).tolist())
+slack.round_complete(2, f"Top 5: {r2_df['model'].head(5).tolist()}")
 r2_df[["model", "best_rmse"]]"""),
         code("""\
-top5_names = r2_df["model"].head(5).tolist()
-r2_best_params = {row["model"]: row["best_params"] for _, row in r2_df.iterrows()}
+r2_summary = ckpt.load_round_summary(2)
+if r2_summary:
+    top5_names = r2_summary["top_names"]
+else:
+    top5_names = r2_df["model"].head(5).tolist()
+r2_best_params = {row["model"]: row["best_params"] for _, row in r2_df.iterrows() if "best_params" in row}
 print(f"Advancing to Round 3: {top5_names}")"""),
         md("## 6. Round 3 — Final Tuning (top 5, 15 trials each)"),
         code("""\
+progress.round_header(3, "Final tuning (top 5, 15 trials each)")
+slack.round_start(3, "Final Optuna tuning", len(top5_names))
 r3_results = []
-for name in top5_names:
-    print(f"Fine-tuning {name}...")
-    best_params, best_rmse = run_optuna_round_g(
-        name, X_seq, y_seq, splitter, groups, n_trials=15)
-    r3_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
-    print(f"  Best RMSE: {best_rmse:.4f}")
+completed_r3 = ckpt.get_completed(3)
+for idx, name in enumerate(top5_names, 1):
+    if name in completed_r3:
+        cp = completed_r3[name]
+        r3_results.append({"model": name, "best_rmse": cp["rmse"], "best_params": cp["best_params"]})
+        progress.log(f"{name} -- RESUMED from checkpoint (RMSE: {cp['rmse']:.6f})")
+        continue
+    progress.log(f"Fine-tuning {name} ({idx}/{len(top5_names)})...")
+    try:
+        best_params, best_rmse = run_optuna_round_g(
+            name, X_seq, y_seq, splitter, groups, n_trials=15)
+        r3_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
+        ckpt.save_checkpoint(3, name, best_rmse, best_params)
+        progress.model_complete(name, 3, best_rmse)
+        slack.architecture_done(name, 3, best_rmse)
+    except Exception as e:
+        progress.log(f"{name} FAILED in Round 3: {e}")
+        slack.error(f"R3 {name}", str(e))
 
 r3_df = pd.DataFrame(r3_results).sort_values("best_rmse").reset_index(drop=True)
-r3_best_params = {row["model"]: row["best_params"] for _, row in r3_df.iterrows()}
+r3_best_params = {row["model"]: row["best_params"] for _, row in r3_df.iterrows() if "best_params" in row}
+ckpt.save_round_summary(3, r3_results, r3_df["model"].head(5).tolist())
+slack.round_complete(3, f"Best: {r3_df.iloc[0]['model']} (RMSE: {r3_df.iloc[0]['best_rmse']:.6f})")
 r3_df[["model", "best_rmse"]]"""),
         md("## 7. Test Set Evaluation (Per-Lap)"),
         code("""\
@@ -2774,7 +3002,12 @@ if len(sim_df) > 0:
     print(f"  Within-3:      {sim_metrics['within_3']:.1f}%")
 print(f"\\nArtifacts saved to:")
 print(f"  Predictions: {TRAINING_DIR}")
-print(f"  Models: {MODEL_DIR}")"""),
+print(f"  Models: {MODEL_DIR}")
+
+best_name = final_df.iloc[0]["model"]
+best_rmse = final_df.iloc[0]["test_rmse"]
+progress.log(f"MODEL G TRAINING COMPLETE -- best: {best_name} (RMSE: {best_rmse:.6f})")
+slack.model_complete(best_name, best_rmse)"""),
     ]
     return cells
 
@@ -2797,6 +3030,10 @@ def make_model_h() -> list[dict]:
         code(CHDIR),
         code(IMPORTS),
         code(SAVE_ARTIFACTS),
+        code(PROGRESS_LOGGER.format(model_key="H")),
+        code(SLACK_NOTIFIER.format(model_key="H")),
+        code(CHECKPOINT_MANAGER.format(model_key="H")),
+        code("slack.model_start()\nprogress.log('Starting Model H training')"),
         md("## 1. Build Training Data (Delta Target)"),
         code("""\
 from f1_predictor.features.simulation_features import (
@@ -3023,13 +3260,24 @@ def cv_evaluate_h(model, X, y, splitter, groups):
 
 def screen_models_h(candidates, X, y, splitter, groups):
     rows = []
-    for name, model in candidates.items():
+    completed = ckpt.get_completed(1)
+    total = len(candidates)
+    for idx, (name, model) in enumerate(candidates.items(), 1):
+        if name in completed:
+            cp = completed[name]
+            rows.append({"model": name, "mean_rmse": cp["rmse"],
+                         "std_rmse": cp.get("std_rmse", 0), "mean_mae": cp.get("mean_mae", 0)})
+            progress.log(f"Screening {idx}/{total} {name} -- RESUMED (RMSE: {cp['rmse']:.6f})")
+            continue
         try:
             result = cv_evaluate_h(model, X, y, splitter, groups)
             rows.append({"model": name, **result})
-            print(f"  {name}: RMSE={result['mean_rmse']:.4f}")
+            progress.screening(name, idx, total, rmse=result["mean_rmse"])
+            ckpt.save_checkpoint(1, name, result["mean_rmse"], {},
+                                 std_rmse=result["std_rmse"], mean_mae=result["mean_mae"])
         except Exception as e:
-            print(f"  {name}: FAILED — {e}")
+            progress.screening(name, idx, total, error=str(e))
+            slack.error(f"R1 screening {name}", str(e))
     if not rows:
         raise RuntimeError("All candidates failed — check data for NaN or shape issues")
     return pd.DataFrame(rows).sort_values("mean_rmse").reset_index(drop=True)
@@ -3041,13 +3289,21 @@ def run_optuna_round_h(name, X, y, splitter, groups, n_trials):
         model = model_cls(**params)
         result = cv_evaluate_h(model, X, y, splitter, groups)
         return result["mean_rmse"]
+    def _trial_cb(study, trial):
+        if trial.value is not None:
+            progress.optuna_trial(name, trial.number + 1, n_trials, trial.value, study.best_value)
     study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(seed=42))
-    study.optimize(objective, n_trials=n_trials, catch=(Exception,), show_progress_bar=False)
+    study.optimize(objective, n_trials=n_trials, catch=(Exception,), show_progress_bar=False,
+                   callbacks=[_trial_cb])
     return study.best_params, study.best_value"""),
         md("## 4. Round 1 — Screen Models"),
         code("""\
+progress.round_header(1, "Screen all candidates")
+slack.round_start(1, "Screening all candidates", len(get_candidates_h()))
 candidates = get_candidates_h()
 r1_results = screen_models_h(candidates, X, y, splitter, groups)
+ckpt.save_round_summary(1, r1_results.to_dict("records"), r1_results["model"].head(7).tolist())
+slack.round_complete(1, f"Best: {r1_results.iloc[0]['model']} (RMSE: {r1_results.iloc[0]['mean_rmse']:.6f})")
 r1_results[["model", "mean_rmse", "std_rmse", "mean_mae"]]"""),
         code("""\
 fig, ax = plt.subplots(figsize=(10, 5))
@@ -3058,36 +3314,76 @@ ax.invert_yaxis()
 plt.tight_layout()
 plt.show()"""),
         code("""\
-top7_names = r1_results["model"].head(7).tolist()
+r1_summary = ckpt.load_round_summary(1)
+if r1_summary:
+    top7_names = r1_summary["top_names"]
+else:
+    top7_names = r1_results["model"].head(7).tolist()
 print(f"Advancing to Round 2: {top7_names}")
-eliminated = r1_results["model"].iloc[7:].tolist()
+eliminated = [n for n in r1_results["model"].tolist() if n not in top7_names]
 print(f"Eliminated: {eliminated}")"""),
         md("## 5. Round 2 — Optuna (top 7, 10 trials each)"),
         code("""\
+progress.round_header(2, "Optuna HP tuning (top 7, 10 trials each)")
+slack.round_start(2, "Optuna HP tuning", len(top7_names))
 r2_results = []
-for name in top7_names:
-    print(f"Tuning {name}...")
-    best_params, best_rmse = run_optuna_round_h(name, X, y, splitter, groups, n_trials=10)
-    r2_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
-    print(f"  Best RMSE: {best_rmse:.4f}")
+completed_r2 = ckpt.get_completed(2)
+for idx, name in enumerate(top7_names, 1):
+    if name in completed_r2:
+        cp = completed_r2[name]
+        r2_results.append({"model": name, "best_rmse": cp["rmse"], "best_params": cp["best_params"]})
+        progress.log(f"{name} -- RESUMED from checkpoint (RMSE: {cp['rmse']:.6f})")
+        continue
+    progress.log(f"Tuning {name} ({idx}/{len(top7_names)})...")
+    try:
+        best_params, best_rmse = run_optuna_round_h(name, X, y, splitter, groups, n_trials=10)
+        r2_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
+        ckpt.save_checkpoint(2, name, best_rmse, best_params)
+        progress.model_complete(name, 2, best_rmse)
+        slack.architecture_done(name, 2, best_rmse)
+    except Exception as e:
+        progress.log(f"{name} FAILED in Round 2: {e}")
+        slack.error(f"R2 {name}", str(e))
 
 r2_df = pd.DataFrame(r2_results).sort_values("best_rmse").reset_index(drop=True)
+ckpt.save_round_summary(2, r2_results, r2_df["model"].head(5).tolist())
+slack.round_complete(2, f"Top 5: {r2_df['model'].head(5).tolist()}")
 r2_df[["model", "best_rmse"]]"""),
         code("""\
-top5_names = r2_df["model"].head(5).tolist()
-r2_best_params = {row["model"]: row["best_params"] for _, row in r2_df.iterrows()}
+r2_summary = ckpt.load_round_summary(2)
+if r2_summary:
+    top5_names = r2_summary["top_names"]
+else:
+    top5_names = r2_df["model"].head(5).tolist()
+r2_best_params = {row["model"]: row["best_params"] for _, row in r2_df.iterrows() if "best_params" in row}
 print(f"Advancing to Round 3: {top5_names}")"""),
         md("## 6. Round 3 — Final Tuning (top 5, 15 trials each)"),
         code("""\
+progress.round_header(3, "Final tuning (top 5, 15 trials each)")
+slack.round_start(3, "Final Optuna tuning", len(top5_names))
 r3_results = []
-for name in top5_names:
-    print(f"Fine-tuning {name}...")
-    best_params, best_rmse = run_optuna_round_h(name, X, y, splitter, groups, n_trials=15)
-    r3_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
-    print(f"  Best RMSE: {best_rmse:.4f}")
+completed_r3 = ckpt.get_completed(3)
+for idx, name in enumerate(top5_names, 1):
+    if name in completed_r3:
+        cp = completed_r3[name]
+        r3_results.append({"model": name, "best_rmse": cp["rmse"], "best_params": cp["best_params"]})
+        progress.log(f"{name} -- RESUMED from checkpoint (RMSE: {cp['rmse']:.6f})")
+        continue
+    progress.log(f"Fine-tuning {name} ({idx}/{len(top5_names)})...")
+    try:
+        best_params, best_rmse = run_optuna_round_h(name, X, y, splitter, groups, n_trials=15)
+        r3_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
+        ckpt.save_checkpoint(3, name, best_rmse, best_params)
+        progress.model_complete(name, 3, best_rmse)
+        slack.architecture_done(name, 3, best_rmse)
+    except Exception as e:
+        progress.log(f"{name} FAILED in Round 3: {e}")
+        slack.error(f"R3 {name}", str(e))
 
 r3_df = pd.DataFrame(r3_results).sort_values("best_rmse").reset_index(drop=True)
-r3_best_params = {row["model"]: row["best_params"] for _, row in r3_df.iterrows()}
+r3_best_params = {row["model"]: row["best_params"] for _, row in r3_df.iterrows() if "best_params" in row}
+ckpt.save_round_summary(3, r3_results, r3_df["model"].head(5).tolist())
+slack.round_complete(3, f"Best: {r3_df.iloc[0]['model']} (RMSE: {r3_df.iloc[0]['best_rmse']:.6f})")
 r3_df[["model", "best_rmse"]]"""),
         md("## 7. Test Set Evaluation (Per-Lap Delta)"),
         code("""\
@@ -3314,7 +3610,12 @@ if len(mc_df) > 0:
 
 print(f"\\nArtifacts saved to:")
 print(f"  Predictions: {TRAINING_DIR}")
-print(f"  Models: {MODEL_DIR}")"""),
+print(f"  Models: {MODEL_DIR}")
+
+best_name = final_df.iloc[0]["model"]
+best_rmse = final_df.iloc[0]["test_rmse"]
+progress.log(f"MODEL H TRAINING COMPLETE -- best: {best_name} (RMSE: {best_rmse:.6f})")
+slack.model_complete(best_name, best_rmse)"""),
     ]
     return cells
 
@@ -3338,6 +3639,10 @@ def make_model_i() -> list[dict]:
         code(CHDIR),
         code(IMPORTS),
         code(SAVE_ARTIFACTS),
+        code(PROGRESS_LOGGER.format(model_key="I")),
+        code(SLACK_NOTIFIER.format(model_key="I")),
+        code(CHECKPOINT_MANAGER.format(model_key="I")),
+        code("slack.model_start()\nprogress.log('Starting Model I training')"),
         md("## 1. Build Training Data"),
         code("""\
 from f1_predictor.features.simulation_features import (
@@ -3524,13 +3829,24 @@ def cv_evaluate_i(model, X, y, splitter, groups):
 
 def screen_models_i(candidates, X, y, splitter, groups):
     rows = []
-    for name, model in candidates.items():
+    completed = ckpt.get_completed(1)
+    total = len(candidates)
+    for idx, (name, model) in enumerate(candidates.items(), 1):
+        if name in completed:
+            cp = completed[name]
+            rows.append({"model": name, "mean_rmse": cp["rmse"],
+                         "std_rmse": cp.get("std_rmse", 0), "mean_mae": cp.get("mean_mae", 0)})
+            progress.log(f"Screening {idx}/{total} {name} -- RESUMED (RMSE: {cp['rmse']:.6f})")
+            continue
         try:
             result = cv_evaluate_i(model, X, y, splitter, groups)
             rows.append({"model": name, **result})
-            print(f"  {name}: RMSE={result['mean_rmse']:.4f}")
+            progress.screening(name, idx, total, rmse=result["mean_rmse"])
+            ckpt.save_checkpoint(1, name, result["mean_rmse"], {},
+                                 std_rmse=result["std_rmse"], mean_mae=result["mean_mae"])
         except Exception as e:
-            print(f"  {name}: FAILED — {e}")
+            progress.screening(name, idx, total, error=str(e))
+            slack.error(f"R1 screening {name}", str(e))
     if not rows:
         raise RuntimeError("All candidates failed — check data for NaN or shape issues")
     return pd.DataFrame(rows).sort_values("mean_rmse").reset_index(drop=True)
@@ -3543,6 +3859,9 @@ def run_optuna_round_i(name, X, y, splitter, groups, n_trials):
         model = model_cls(**params)
         result = cv_evaluate_i(model, X, y, splitter, groups)
         return result["mean_rmse"]
+    def _trial_cb(study, trial):
+        if trial.value is not None:
+            progress.optuna_trial(name, trial.number + 1, n_trials, trial.value, study.best_value)
     study = optuna.create_study(
         direction="minimize",
         sampler=optuna.samplers.TPESampler(seed=42),
@@ -3550,12 +3869,17 @@ def run_optuna_round_i(name, X, y, splitter, groups, n_trials):
     study.optimize(
         objective, n_trials=n_trials,
         catch=(Exception,), show_progress_bar=False,
+        callbacks=[_trial_cb],
     )
     return study.best_params, study.best_value"""),
         md("## 4. Round 1 — Screen Models"),
         code("""\
+progress.round_header(1, "Screen all candidates")
+slack.round_start(1, "Screening all candidates", len(get_candidates_i()))
 candidates = get_candidates_i()
 r1_results = screen_models_i(candidates, X, y, splitter, groups)
+ckpt.save_round_summary(1, r1_results.to_dict("records"), r1_results["model"].head(min(7, len(r1_results))).tolist())
+slack.round_complete(1, f"Best: {r1_results.iloc[0]['model']} (RMSE: {r1_results.iloc[0]['mean_rmse']:.6f})")
 r1_results[["model", "mean_rmse", "std_rmse", "mean_mae"]]"""),
         code("""\
 fig, ax = plt.subplots(figsize=(10, 5))
@@ -3566,39 +3890,79 @@ ax.invert_yaxis()
 plt.tight_layout()
 plt.show()"""),
         code("""\
-top7_names = r1_results["model"].head(min(7, len(r1_results))).tolist()
+r1_summary = ckpt.load_round_summary(1)
+if r1_summary:
+    top7_names = r1_summary["top_names"]
+else:
+    top7_names = r1_results["model"].head(min(7, len(r1_results))).tolist()
 print(f"Advancing to Round 2: {top7_names}")
-eliminated = r1_results["model"].iloc[7:].tolist()
+eliminated = [n for n in r1_results["model"].tolist() if n not in top7_names]
 if eliminated:
     print(f"Eliminated: {eliminated}")"""),
         md("## 5. Round 2 — Optuna (top 7, 10 trials each)"),
         code("""\
+progress.round_header(2, "Optuna HP tuning (top 7, 10 trials each)")
+slack.round_start(2, "Optuna HP tuning", len(top7_names))
 r2_results = []
-for name in top7_names:
-    print(f"Tuning {name}...")
-    best_params, best_rmse = run_optuna_round_i(
-        name, X, y, splitter, groups, n_trials=10)
-    r2_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
-    print(f"  Best RMSE: {best_rmse:.4f}")
+completed_r2 = ckpt.get_completed(2)
+for idx, name in enumerate(top7_names, 1):
+    if name in completed_r2:
+        cp = completed_r2[name]
+        r2_results.append({"model": name, "best_rmse": cp["rmse"], "best_params": cp["best_params"]})
+        progress.log(f"{name} -- RESUMED from checkpoint (RMSE: {cp['rmse']:.6f})")
+        continue
+    progress.log(f"Tuning {name} ({idx}/{len(top7_names)})...")
+    try:
+        best_params, best_rmse = run_optuna_round_i(
+            name, X, y, splitter, groups, n_trials=10)
+        r2_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
+        ckpt.save_checkpoint(2, name, best_rmse, best_params)
+        progress.model_complete(name, 2, best_rmse)
+        slack.architecture_done(name, 2, best_rmse)
+    except Exception as e:
+        progress.log(f"{name} FAILED in Round 2: {e}")
+        slack.error(f"R2 {name}", str(e))
 
 r2_df = pd.DataFrame(r2_results).sort_values("best_rmse").reset_index(drop=True)
+ckpt.save_round_summary(2, r2_results, r2_df["model"].head(5).tolist())
+slack.round_complete(2, f"Top 5: {r2_df['model'].head(5).tolist()}")
 r2_df[["model", "best_rmse"]]"""),
         code("""\
-top5_names = r2_df["model"].head(5).tolist()
-r2_best_params = {row["model"]: row["best_params"] for _, row in r2_df.iterrows()}
+r2_summary = ckpt.load_round_summary(2)
+if r2_summary:
+    top5_names = r2_summary["top_names"]
+else:
+    top5_names = r2_df["model"].head(5).tolist()
+r2_best_params = {row["model"]: row["best_params"] for _, row in r2_df.iterrows() if "best_params" in row}
 print(f"Advancing to Round 3: {top5_names}")"""),
         md("## 6. Round 3 — Final Tuning (top 5, 15 trials each)"),
         code("""\
+progress.round_header(3, "Final tuning (top 5, 15 trials each)")
+slack.round_start(3, "Final Optuna tuning", len(top5_names))
 r3_results = []
-for name in top5_names:
-    print(f"Fine-tuning {name}...")
-    best_params, best_rmse = run_optuna_round_i(
-        name, X, y, splitter, groups, n_trials=15)
-    r3_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
-    print(f"  Best RMSE: {best_rmse:.4f}")
+completed_r3 = ckpt.get_completed(3)
+for idx, name in enumerate(top5_names, 1):
+    if name in completed_r3:
+        cp = completed_r3[name]
+        r3_results.append({"model": name, "best_rmse": cp["rmse"], "best_params": cp["best_params"]})
+        progress.log(f"{name} -- RESUMED from checkpoint (RMSE: {cp['rmse']:.6f})")
+        continue
+    progress.log(f"Fine-tuning {name} ({idx}/{len(top5_names)})...")
+    try:
+        best_params, best_rmse = run_optuna_round_i(
+            name, X, y, splitter, groups, n_trials=15)
+        r3_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
+        ckpt.save_checkpoint(3, name, best_rmse, best_params)
+        progress.model_complete(name, 3, best_rmse)
+        slack.architecture_done(name, 3, best_rmse)
+    except Exception as e:
+        progress.log(f"{name} FAILED in Round 3: {e}")
+        slack.error(f"R3 {name}", str(e))
 
 r3_df = pd.DataFrame(r3_results).sort_values("best_rmse").reset_index(drop=True)
-r3_best_params = {row["model"]: row["best_params"] for _, row in r3_df.iterrows()}
+r3_best_params = {row["model"]: row["best_params"] for _, row in r3_df.iterrows() if "best_params" in row}
+ckpt.save_round_summary(3, r3_results, r3_df["model"].head(5).tolist())
+slack.round_complete(3, f"Best: {r3_df.iloc[0]['model']} (RMSE: {r3_df.iloc[0]['best_rmse']:.6f})")
 r3_df[["model", "best_rmse"]]"""),
         md("## 7. Test Set Evaluation (Per-Lap)"),
         code("""\
@@ -3805,7 +4169,12 @@ if len(mc_df) > 0:
 
 print(f"\\nArtifacts saved to:")
 print(f"  Predictions: {TRAINING_DIR}")
-print(f"  Models: {MODEL_DIR}")"""),
+print(f"  Models: {MODEL_DIR}")
+
+best_name = final_df.iloc[0]["model"]
+best_rmse = final_df.iloc[0]["test_rmse"]
+progress.log(f"MODEL I TRAINING COMPLETE -- best: {best_name} (RMSE: {best_rmse:.6f})")
+slack.model_complete(best_name, best_rmse)"""),
     ]
     return cells
 
