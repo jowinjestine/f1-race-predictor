@@ -288,6 +288,8 @@ def create_vm(model_keys: list[str], *, cpu: bool = False, gpu: str = "l4") -> t
     instance_client = compute_v1.InstancesClient()
     image_client = compute_v1.ImagesClient()
 
+    gpu_cfg = GPU_CONFIGS[gpu]
+
     if cpu:
         image_family = CPU_IMAGE_FAMILY
         image_project = CPU_IMAGE_PROJECT
@@ -296,8 +298,6 @@ def create_vm(model_keys: list[str], *, cpu: bool = False, gpu: str = "l4") -> t
         image_project = GPU_IMAGE_PROJECT
 
     image = image_client.get_from_family(project=image_project, family=image_family)
-
-    gpu_cfg = GPU_CONFIGS[gpu]
     zones_to_try = [ZONE] if cpu else gpu_cfg["zones"]
 
     for zone in zones_to_try:
