@@ -43,12 +43,17 @@ def build_sequence_training_data(
 
     df = df.sort_values([*DRIVER_RACE_KEY, "lap_number"]).reset_index(drop=True)
 
+    # Compute per-column medians for NaN imputation (forward-fill within
+    # each driver-race, then fall back to global median for remaining NaN)
+    _global_medians = df[feature_cols].median()
+
     X_list: list[NDArray[np.float64]] = []
     y_list: list[float] = []
     id_rows: list[dict] = []
 
     for (_season, _round, _driver), grp in df.groupby(DRIVER_RACE_KEY):
-        features = grp[feature_cols].values.astype(np.float64)
+        grp_filled = grp[feature_cols].ffill().fillna(_global_medians)
+        features = grp_filled.values.astype(np.float64)
         targets = grp["lap_time_ratio"].values.astype(np.float64)
         n_laps = len(grp)
 

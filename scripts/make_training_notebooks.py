@@ -412,11 +412,14 @@ def save_model_pkl(model, model_type, model_name):
 # Model A notebook
 # ---------------------------------------------------------------------------
 
+
 def make_model_a() -> list[dict]:
     cells = [
-        md("# 05a — Model A Training: Lap + Tyre (2019-2024)\n\n"
-           "Predicts **lap-level position** using 9 features including tyre data.\n"
-           "CV: LeaveOneSeasonOut (test season = 2024)."),
+        md(
+            "# 05a — Model A Training: Lap + Tyre (2019-2024)\n\n"
+            "Predicts **lap-level position** using 9 features including tyre data.\n"
+            "CV: LeaveOneSeasonOut (test season = 2024)."
+        ),
         md("## 0. Setup"),
         code(CHDIR),
         code(IMPORTS),
@@ -612,11 +615,14 @@ print(f"  Models: {MODEL_DIR}")"""),
 # Model B notebook
 # ---------------------------------------------------------------------------
 
+
 def make_model_b() -> list[dict]:
     cells = [
-        md("# 05b — Model B Training: Lap, No Tyre (2018-2025)\n\n"
-           "Predicts **lap-level position** using 8 features (no tyre data).\n"
-           "CV: ExpandingWindowSplit (test season = 2025)."),
+        md(
+            "# 05b — Model B Training: Lap, No Tyre (2018-2025)\n\n"
+            "Predicts **lap-level position** using 8 features (no tyre data).\n"
+            "CV: ExpandingWindowSplit (test season = 2025)."
+        ),
         md("## 0. Setup"),
         code(CHDIR),
         code(IMPORTS),
@@ -812,11 +818,14 @@ print(f"  Models: {MODEL_DIR}")"""),
 # Model C notebook
 # ---------------------------------------------------------------------------
 
+
 def make_model_c() -> list[dict]:
     cells = [
-        md("# 05c — Model C Training: Pre-Race Features (2018-2025)\n\n"
-           "Predicts **race-level finish_position** using 15 pre-race features.\n"
-           "CV: ExpandingWindowSplit (test season = 2025)."),
+        md(
+            "# 05c — Model C Training: Pre-Race Features (2018-2025)\n\n"
+            "Predicts **race-level finish_position** using 15 pre-race features.\n"
+            "CV: ExpandingWindowSplit (test season = 2025)."
+        ),
         md("## 0. Setup"),
         code(CHDIR),
         code(IMPORTS),
@@ -1014,14 +1023,17 @@ print(f"  Models: {MODEL_DIR}")"""),
 # Model D notebook (stacking)
 # ---------------------------------------------------------------------------
 
+
 def make_model_d() -> list[dict]:
     cells = [
-        md("# 05d — Model D Training: All-Combinations Stacking\n\n"
-           "Combines race-level predictions from **all** variants of Models A, B, C\n"
-           "into stacking ensembles. Two-phase approach:\n"
-           "- **Phase 1:** RidgeCV screen of all A x B x C combinations\n"
-           "- **Phase 2:** Full tournament on top 20 combinations\n\n"
-           "Uses out-of-fold (OOF) predictions as meta-features to prevent leakage."),
+        md(
+            "# 05d — Model D Training: All-Combinations Stacking\n\n"
+            "Combines race-level predictions from **all** variants of Models A, B, C\n"
+            "into stacking ensembles. Two-phase approach:\n"
+            "- **Phase 1:** RidgeCV screen of all A x B x C combinations\n"
+            "- **Phase 2:** Full tournament on top 20 combinations\n\n"
+            "Uses out-of-fold (OOF) predictions as meta-features to prevent leakage."
+        ),
         md("## 0. Setup"),
         code(CHDIR),
         code("""\
@@ -1081,8 +1093,10 @@ def cv_evaluate(model, X, y, splitter, groups):
         "mean_rmse": np.mean(fold_rmse), "std_rmse": np.std(fold_rmse),
         "mean_mae": np.mean(fold_mae),
     }"""),
-        md("## 1. Discover All Variant Predictions\n\n"
-           "Scan `data/training/` for all Validation parquets from each model type."),
+        md(
+            "## 1. Discover All Variant Predictions\n\n"
+            "Scan `data/training/` for all Validation parquets from each model type."
+        ),
         code("""\
 def discover_variants(model_type):
     \"\"\"Find all variant names that have Validation parquets.\"\"\"
@@ -1157,8 +1171,10 @@ val_seasons = [s for s in available_seasons if s != 2023]
 splitter = LeaveOneSeasonOut(val_seasons=val_seasons, test_season=2023)
 print(f"Val seasons: {val_seasons}, Test: 2023")
 print(f"CV folds: {splitter.get_n_splits()}")"""),
-        md("## 4. Phase 1 — RidgeCV Screen of ALL Combinations\n\n"
-           "Fast screen using RidgeCV on every A x B x C combination."),
+        md(
+            "## 4. Phase 1 — RidgeCV Screen of ALL Combinations\n\n"
+            "Fast screen using RidgeCV on every A x B x C combination."
+        ),
         code("""\
 all_combos = list(itertools.product(variants_A, variants_B, variants_C))
 print(f"Screening {len(all_combos)} combinations with RidgeCV...")
@@ -1406,23 +1422,26 @@ for _, row in final_df.iterrows():
 # Model E notebook — Rich Feature Stacking
 # ---------------------------------------------------------------------------
 
+
 def make_model_e() -> list[dict]:
     cells = [
-        md("# 05e — Model E Training: Rich Feature Stacking\n\n"
-           "Combines **Model A's lap-level richness** with "
-           "**Model D's stacking stability**.\n\n"
-           "Key improvements over Model D (which uses only 3 prediction features):\n"
-           "- **Rich lap-level aggregations** — mean, std, last-5, min, range "
-           "(not just last lap)\n"
-           "- **Pre-race context** — grid position and qualifying gap\n"
-           "- **Auto-selection** — picks the best variant of each base model\n\n"
-           "| Feature Source | Count | Signal |\n"
-           "|---|---|---|\n"
-           "| Model A lap-level agg | 6 | In-race position trajectory |\n"
-           "| Model B lap-level agg | 4 | Long-term form trajectory |\n"
-           "| Model C prediction | 1 | Pre-race baseline |\n"
-           "| Race features | 2 | Grid position, qualifying pace |\n"
-           "| **Total** | **13** | |"),
+        md(
+            "# 05e — Model E Training: Rich Feature Stacking\n\n"
+            "Combines **Model A's lap-level richness** with "
+            "**Model D's stacking stability**.\n\n"
+            "Key improvements over Model D (which uses only 3 prediction features):\n"
+            "- **Rich lap-level aggregations** — mean, std, last-5, min, range "
+            "(not just last lap)\n"
+            "- **Pre-race context** — grid position and qualifying gap\n"
+            "- **Auto-selection** — picks the best variant of each base model\n\n"
+            "| Feature Source | Count | Signal |\n"
+            "|---|---|---|\n"
+            "| Model A lap-level agg | 6 | In-race position trajectory |\n"
+            "| Model B lap-level agg | 4 | Long-term form trajectory |\n"
+            "| Model C prediction | 1 | Pre-race baseline |\n"
+            "| Race features | 2 | Grid position, qualifying pace |\n"
+            "| **Total** | **13** | |"
+        ),
         md("## 0. Setup"),
         code(CHDIR),
         code("""\
@@ -1554,9 +1573,11 @@ best_C, rmse_C = select_best_variant("C", is_lap_level=False)
 print(f"Best Model A variant: {best_A} (val RMSE={rmse_A:.4f})")
 print(f"Best Model B variant: {best_B} (val RMSE={rmse_B:.4f})")
 print(f"Best Model C variant: {best_C} (val RMSE={rmse_C:.4f})")"""),
-        md("## 2. Build Rich Meta-Features\n\n"
-           "Extract 6 statistics from Model A's lap-level predictions, "
-           "4 from Model B, 1 from Model C."),
+        md(
+            "## 2. Build Rich Meta-Features\n\n"
+            "Extract 6 statistics from Model A's lap-level predictions, "
+            "4 from Model B, 1 from Model C."
+        ),
         code("""\
 df_A = load_training_parquet(
     f"model_A_{best_A}_Validation.parquet", TRAINING_DIR)
@@ -1936,17 +1957,19 @@ print(f"\\nBest: {best['Meta']}  RMSE={best['Test_RMSE']:.4f}  "
 
 def make_model_f() -> list[dict]:
     cells = [
-        md("# 05f — Model F Training: Lap Time Simulation\n\n"
-           "Predicts **lap_time_ratio** (lap_time / best_quali_time) for autoregressive\n"
-           "race simulation. Positions derived by ranking cumulative predicted times.\n\n"
-           "| Feature Group | Count | Description |\n"
-           "|---|---|---|\n"
-           "| Static | 5 | Grid, quali pace, circuit type |\n"
-           "| Deterministic | 10 | Lap, tyre, pit state |\n"
-           "| Feedback | 6 | Rolling pace, gaps, position |\n"
-           "| Context | 1 | Caution flag |\n"
-           "| **Total** | **22** | |\n\n"
-           "CV: ExpandingWindowSplit (2019→2020, 2019-20→2021, ..., 2019-23→2024 test)."),
+        md(
+            "# 05f — Model F Training: Lap Time Simulation\n\n"
+            "Predicts **lap_time_ratio** (lap_time / best_quali_time) for autoregressive\n"
+            "race simulation. Positions derived by ranking cumulative predicted times.\n\n"
+            "| Feature Group | Count | Description |\n"
+            "|---|---|---|\n"
+            "| Static | 5 | Grid, quali pace, circuit type |\n"
+            "| Deterministic | 10 | Lap, tyre, pit state |\n"
+            "| Feedback | 6 | Rolling pace, gaps, position |\n"
+            "| Context | 1 | Caution flag |\n"
+            "| **Total** | **22** | |\n\n"
+            "CV: ExpandingWindowSplit (2019→2020, 2019-20→2021, ..., 2019-23→2024 test)."
+        ),
         md("## 0. Setup"),
         code(CHDIR),
         code(IMPORTS),
@@ -2114,9 +2137,11 @@ ax.set_title("Model F — Final 5 Models: Train / Val / Test RMSE")
 ax.legend()
 plt.tight_layout()
 plt.show()"""),
-        md("## 7. Full Simulation Evaluation (2024 Test Races)\n\n"
-           "Run autoregressive simulation on test season races and compare\n"
-           "predicted final positions to actual finishing positions."),
+        md(
+            "## 7. Full Simulation Evaluation (2024 Test Races)\n\n"
+            "Run autoregressive simulation on test season races and compare\n"
+            "predicted final positions to actual finishing positions."
+        ),
         code("""\
 from scipy.stats import spearmanr
 from f1_predictor.simulation.engine import RaceSimulator
@@ -2311,14 +2336,17 @@ print(f"  Features: data/processed/simulation/")"""),
 # Model G notebook: Temporal Sequence Models
 # ---------------------------------------------------------------------------
 
+
 def make_model_g() -> list[dict]:
     cells = [
-        md("# 05g — Model G Training: Temporal Sequence Models\n\n"
-           "Treats each driver's race as a **time series**. A sliding window of\n"
-           "the last W laps' features predicts the current lap's `lap_time_ratio`.\n\n"
-           "10 GPU candidates: GRU/LSTM/TCN/Transformer/CNN variants.\n"
-           "All models Optuna-tunable (no skip).\n\n"
-           "CV: ExpandingWindowSplit (2019→2020, ..., 2019-23→2024 test)."),
+        md(
+            "# 05g — Model G Training: Temporal Sequence Models\n\n"
+            "Treats each driver's race as a **time series**. A sliding window of\n"
+            "the last W laps' features predicts the current lap's `lap_time_ratio`.\n\n"
+            "10 GPU candidates: GRU/LSTM/TCN/Transformer/CNN variants.\n"
+            "All models Optuna-tunable (no skip).\n\n"
+            "CV: ExpandingWindowSplit (2019→2020, ..., 2019-23→2024 test)."
+        ),
         md("## 0. Setup"),
         code(CHDIR),
         code(IMPORTS),
@@ -2376,8 +2404,10 @@ for i, (tr, va) in enumerate(splitter.split(groups)):
     va_seasons = sorted(set(groups[va]))
     print(f"  Fold {i}: train seasons={tr_seasons}, val seasons={va_seasons}, "
           f"train={len(tr):,}, val={len(va):,}")"""),
-        md("## 3. Model Candidates and Helpers\n\n"
-           "10 sequence model candidates, all Optuna-tunable."),
+        md(
+            "## 3. Model Candidates and Helpers\n\n"
+            "10 sequence model candidates, all Optuna-tunable."
+        ),
         code("""\
 from f1_predictor.models.sequence_architectures import (
     SeqGRU_Shallow, SeqGRU_Deep, SeqGRU_Bidir,
@@ -2475,6 +2505,8 @@ def screen_models_g(candidates, X_seq_full, y_full, splitter, groups):
             print(f"  {name}: RMSE={result['mean_rmse']:.4f}")
         except Exception as e:
             print(f"  {name}: FAILED — {e}")
+    if not rows:
+        raise RuntimeError("All candidates failed — check data for NaN or shape issues")
     return pd.DataFrame(rows).sort_values("mean_rmse").reset_index(drop=True)
 
 
@@ -2751,13 +2783,16 @@ print(f"  Models: {MODEL_DIR}")"""),
 # Model H notebook: Delta + Monte Carlo
 # ---------------------------------------------------------------------------
 
+
 def make_model_h() -> list[dict]:
     cells = [
-        md("# 05h — Model H Training: Delta + Monte Carlo Simulation\n\n"
-           "Predicts **delta_ratio** (lap_time_ratio - field_median_ratio) to cancel\n"
-           "systematic bias. Monte Carlo (N=200) averages out random errors.\n\n"
-           "Same 25 features as Model F, different target + MC inference.\n\n"
-           "CV: ExpandingWindowSplit (2019→2020 ... 2019-23→2024 test)."),
+        md(
+            "# 05h — Model H Training: Delta + Monte Carlo Simulation\n\n"
+            "Predicts **delta_ratio** (lap_time_ratio - field_median_ratio) to cancel\n"
+            "systematic bias. Monte Carlo (N=200) averages out random errors.\n\n"
+            "Same 25 features as Model F, different target + MC inference.\n\n"
+            "CV: ExpandingWindowSplit (2019→2020 ... 2019-23→2024 test)."
+        ),
         md("## 0. Setup"),
         code(CHDIR),
         code(IMPORTS),
@@ -2823,9 +2858,11 @@ for i, (tr, va) in enumerate(splitter.split(groups)):
     va_seasons = sorted(set(groups[va]))
     print(f"  Fold {i}: train seasons={tr_seasons}, val seasons={va_seasons}, "
           f"train={len(tr):,}, val={len(va):,}")"""),
-        md("## 3. Model Candidates and Helpers\n\n"
-           "9 GPU candidates: 6 tree-based + 3 DL, all on delta target.\n"
-           "DL models are Optuna-tunable (no skip)."),
+        md(
+            "## 3. Model Candidates and Helpers\n\n"
+            "9 GPU candidates: 6 tree-based + 3 DL, all on delta target.\n"
+            "DL models are Optuna-tunable (no skip)."
+        ),
         code("""\
 NAN_TOLERANT = {
     "XGBoost_Delta", "XGBoost_DART_Delta", "XGBoost_Deep_Delta",
@@ -2993,6 +3030,8 @@ def screen_models_h(candidates, X, y, splitter, groups):
             print(f"  {name}: RMSE={result['mean_rmse']:.4f}")
         except Exception as e:
             print(f"  {name}: FAILED — {e}")
+    if not rows:
+        raise RuntimeError("All candidates failed — check data for NaN or shape issues")
     return pd.DataFrame(rows).sort_values("mean_rmse").reset_index(drop=True)
 
 def run_optuna_round_h(name, X, y, splitter, groups, n_trials):
@@ -3284,14 +3323,17 @@ print(f"  Models: {MODEL_DIR}")"""),
 # Model I notebook: Uncertainty / Quantile Models
 # ---------------------------------------------------------------------------
 
+
 def make_model_i() -> list[dict]:
     cells = [
-        md("# 05i — Model I Training: Uncertainty-Aware / Quantile Models\n\n"
-           "Predicts the **distribution** of `lap_time_ratio` via quantile regression,\n"
-           "mixture density networks, or deep ensembles.\n\n"
-           "8 GPU candidates: 2 tree-quantile + 3 DL-quantile + 2 MDN + 1 ensemble.\n"
-           "Quantile Monte Carlo: sample from predicted distribution for principled MC.\n\n"
-           "CV: ExpandingWindowSplit (2019→2020, ..., 2019-23→2024 test)."),
+        md(
+            "# 05i — Model I Training: Uncertainty-Aware / Quantile Models\n\n"
+            "Predicts the **distribution** of `lap_time_ratio` via quantile regression,\n"
+            "mixture density networks, or deep ensembles.\n\n"
+            "8 GPU candidates: 2 tree-quantile + 3 DL-quantile + 2 MDN + 1 ensemble.\n"
+            "Quantile Monte Carlo: sample from predicted distribution for principled MC.\n\n"
+            "CV: ExpandingWindowSplit (2019→2020, ..., 2019-23→2024 test)."
+        ),
         md("## 0. Setup"),
         code(CHDIR),
         code(IMPORTS),
@@ -3344,8 +3386,10 @@ for i, (tr, va) in enumerate(splitter.split(groups)):
     va_seasons = sorted(set(groups[va]))
     print(f"  Fold {i}: train={tr_seasons}, val={va_seasons}, "
           f"train={len(tr):,}, val={len(va):,}")"""),
-        md("## 3. Model Candidates and Helpers\n\n"
-           "8 uncertainty-aware candidates, all Optuna-tunable."),
+        md(
+            "## 3. Model Candidates and Helpers\n\n"
+            "8 uncertainty-aware candidates, all Optuna-tunable."
+        ),
         code("""\
 from f1_predictor.models.quantile_architectures import (
     LightGBM_Quantile, XGBoost_Quantile,
@@ -3487,6 +3531,8 @@ def screen_models_i(candidates, X, y, splitter, groups):
             print(f"  {name}: RMSE={result['mean_rmse']:.4f}")
         except Exception as e:
             print(f"  {name}: FAILED — {e}")
+    if not rows:
+        raise RuntimeError("All candidates failed — check data for NaN or shape issues")
     return pd.DataFrame(rows).sort_values("mean_rmse").reset_index(drop=True)
 
 
@@ -3768,23 +3814,26 @@ print(f"  Models: {MODEL_DIR}")"""),
 # Notebook 06: Model Comparison
 # ---------------------------------------------------------------------------
 
+
 def make_model_comparison() -> list[dict]:
     cells = [
-        md("# 06 — Model Comparison: All Models × All Sets × 10 Criteria\n\n"
-           "Comprehensive evaluation of every trained model variant across "
-           "Training, Validation, and Test sets using 10 metrics:\n\n"
-           "| # | Criterion | What it measures |\n"
-           "|---|-----------|------------------|\n"
-           "| 1 | RMSE | Penalises large errors |\n"
-           "| 2 | MAE | Average absolute error |\n"
-           "| 3 | R² | Proportion of variance explained |\n"
-           "| 4 | Median AE | Robust central error (ignores outliers) |\n"
-           "| 5 | Max Error | Worst single prediction |\n"
-           "| 6 | MAPE | Percentage-based error |\n"
-           "| 7 | Within-1 | % predictions within 1 position |\n"
-           "| 8 | Within-3 | % predictions within 3 positions |\n"
-           "| 9 | Spearman ρ | Per-race ranking correlation |\n"
-           "| 10 | Kendall τ | Per-race pairwise ordering agreement |"),
+        md(
+            "# 06 — Model Comparison: All Models × All Sets × 10 Criteria\n\n"
+            "Comprehensive evaluation of every trained model variant across "
+            "Training, Validation, and Test sets using 10 metrics:\n\n"
+            "| # | Criterion | What it measures |\n"
+            "|---|-----------|------------------|\n"
+            "| 1 | RMSE | Penalises large errors |\n"
+            "| 2 | MAE | Average absolute error |\n"
+            "| 3 | R² | Proportion of variance explained |\n"
+            "| 4 | Median AE | Robust central error (ignores outliers) |\n"
+            "| 5 | Max Error | Worst single prediction |\n"
+            "| 6 | MAPE | Percentage-based error |\n"
+            "| 7 | Within-1 | % predictions within 1 position |\n"
+            "| 8 | Within-3 | % predictions within 3 positions |\n"
+            "| 9 | Spearman ρ | Per-race ranking correlation |\n"
+            "| 10 | Kendall τ | Per-race pairwise ordering agreement |"
+        ),
         md("## 0. Setup"),
         code(CHDIR),
         code("""\
@@ -3913,8 +3962,7 @@ results_df = pd.DataFrame(all_results)
 results_df = results_df.sort_values(["Model", "Variant", "Split"])
 print(f"Evaluated {len(results_df)} model-variant-split combinations")
 results_df.head(10)"""),
-        md("## 4. Full Results Table\n\n"
-           "Every model × variant × split with all 10 criteria."),
+        md("## 4. Full Results Table\n\nEvery model × variant × split with all 10 criteria."),
         code("""\
 display_cols = ["Model", "Variant", "Split", "N"] + CRITERIA_COLS
 
@@ -3934,8 +3982,10 @@ styled = (
         cmap="RdYlGn")
 )
 styled"""),
-        md("## 5. Best Variant per Model (Test Set)\n\n"
-           "Selecting each model type's best variant by test RMSE."),
+        md(
+            "## 5. Best Variant per Model (Test Set)\n\n"
+            "Selecting each model type's best variant by test RMSE."
+        ),
         code("""\
 test_df = results_df[results_df["Split"] == "Test"].copy()
 best_idx = test_df.groupby("Model")["RMSE"].idxmin()
@@ -3944,8 +3994,10 @@ best_test = test_df.loc[best_idx].sort_values("RMSE")
 print("Best variant per model type on TEST set:\\n")
 best_test[display_cols].to_string(index=False)
 best_test[display_cols]"""),
-        md("## 6. Train / Val / Test Comparison (Best Variants)\n\n"
-           "Check for overfitting: are train metrics much better than test?"),
+        md(
+            "## 6. Train / Val / Test Comparison (Best Variants)\n\n"
+            "Check for overfitting: are train metrics much better than test?"
+        ),
         code("""\
 best_variants = best_test[["Model", "Variant"]].values.tolist()
 overfit_rows = []
@@ -4003,8 +4055,10 @@ for idx, (model, variant) in enumerate(best_variants):
 plt.suptitle("All 10 Criteria: Train / Val / Test (Best Variants)", fontsize=13, y=1.01)
 plt.tight_layout()
 plt.show()"""),
-        md("## 7. Head-to-Head: Best Models on Test Set\n\n"
-           "Grouped bar chart comparing the 4 model types side-by-side."),
+        md(
+            "## 7. Head-to-Head: Best Models on Test Set\n\n"
+            "Grouped bar chart comparing the 4 model types side-by-side."
+        ),
         code("""\
 fig, axes = plt.subplots(2, 5, figsize=(20, 8))
 
@@ -4034,8 +4088,10 @@ plt.suptitle("Head-to-Head: Best Variant per Model (Test Set) — gold border = 
              fontsize=13, y=1.02)
 plt.tight_layout()
 plt.show()"""),
-        md("## 8. Per-Model Variant Rankings\n\n"
-           "Within each model type, how do the variants compare on the test set?"),
+        md(
+            "## 8. Per-Model Variant Rankings\n\n"
+            "Within each model type, how do the variants compare on the test set?"
+        ),
         code("""\
 for model_type in sorted(test_df["Model"].unique()):
     subset = test_df[test_df["Model"] == model_type].sort_values("RMSE")
@@ -4043,10 +4099,12 @@ for model_type in sorted(test_df["Model"].unique()):
     print(f"Model {model_type} — Test Set Rankings ({len(subset)} variants)")
     print(f"{'='*70}")
     print(subset[["Variant"] + CRITERIA_COLS].to_string(index=False))"""),
-        md("## 9. Ranking Quality Deep Dive\n\n"
-           "Spearman ρ and Kendall τ measure how well predicted positions "
-           "preserve the true finishing order within each race. Values close to 1.0 "
-           "mean the model ranks drivers correctly even if absolute positions are off."),
+        md(
+            "## 9. Ranking Quality Deep Dive\n\n"
+            "Spearman ρ and Kendall τ measure how well predicted positions "
+            "preserve the true finishing order within each race. Values close to 1.0 "
+            "mean the model ranks drivers correctly even if absolute positions are off."
+        ),
         code("""\
 rank_cols = ["Model", "Variant", "Split", "Spearman_ρ", "Kendall_τ"]
 test_df = results_df[results_df["Split"] == "Test"]
@@ -4077,8 +4135,10 @@ ax2.legend(fontsize=8)
 
 plt.tight_layout()
 plt.show()"""),
-        md("## 10. Position Accuracy Breakdown\n\n"
-           "What percentage of predictions land exactly right, within 1, 2, or 3 positions?"),
+        md(
+            "## 10. Position Accuracy Breakdown\n\n"
+            "What percentage of predictions land exactly right, within 1, 2, or 3 positions?"
+        ),
         code("""\
 accuracy_rows = []
 for _, row in inventory[inventory["split"] == "Test"].iterrows():
@@ -4144,6 +4204,7 @@ print(f"  RMSE={overall_best['RMSE']:.4f}, R²={overall_best['R²']:.4f}, "
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main():
     notebooks = {
