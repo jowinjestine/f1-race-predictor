@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Run all model training (A, B, C, D) + comparison on a GCP VM with T4 GPU.
+# Run all model training (A, B, C, D, E, F) + comparison on a GCP VM.
 # The VM self-deletes after uploading results to GCS.
 #
 # Usage:
@@ -29,11 +29,11 @@ IMAGE_PROJECT="deeplearning-platform-release"
 
 if [[ "${1:-}" == "--cpu" ]]; then
     USE_GPU=false
-    MACHINE_TYPE="c2-standard-16"
+    MACHINE_TYPE="e2-standard-8"
     ACCELERATOR=""
     IMAGE_FAMILY="debian-12"
     IMAGE_PROJECT="debian-cloud"
-    echo ">>> CPU-only mode (c2-standard-16, 16 vCPUs)"
+    echo ">>> CPU-only mode (e2-standard-8, 8 vCPUs)"
 elif [[ "$GPU_TYPE" == "t4" || "${1:-}" == "--t4" ]]; then
     MACHINE_TYPE="n1-standard-8"
     ACCELERATOR="--accelerator=type=nvidia-tesla-t4,count=1"
@@ -163,6 +163,13 @@ uv run jupyter nbconvert --to notebook --execute \
     notebooks/05e_model_E_rich_stacking.ipynb \
     --output 05e_model_E_rich_stacking.ipynb 2>&1 || true
 
+# Run Model F (lap simulation — independent of A-E)
+echo "=== Running Model F: $(date) ==="
+uv run jupyter nbconvert --to notebook --execute \
+    --ExecutePreprocessor.timeout=7200 \
+    notebooks/05f_model_F_lap_simulation.ipynb \
+    --output 05f_model_F_lap_simulation.ipynb 2>&1 || true
+
 # Run comparison notebook
 echo "=== Running Comparison: $(date) ==="
 uv run jupyter nbconvert --to notebook --execute \
@@ -182,6 +189,8 @@ gsutil -m -q cp data/raw/model/Model_C_*.pkl "gs://$BUCKET/$RESULTS/raw/model/"
 gsutil -m -q cp data/raw/model/Model_D_*.pkl "gs://$BUCKET/$RESULTS/raw/model/"
 gsutil -m -q cp data/training/model_E_*.parquet "gs://$BUCKET/$RESULTS/training/"
 gsutil -m -q cp data/raw/model/Model_E_*.pkl "gs://$BUCKET/$RESULTS/raw/model/"
+gsutil -m -q cp data/training/model_F_*.parquet "gs://$BUCKET/$RESULTS/training/"
+gsutil -m -q cp data/raw/model/Model_F_*.pkl "gs://$BUCKET/$RESULTS/raw/model/"
 
 # Upload executed notebooks
 gsutil -q cp notebooks/05a_model_A_training.ipynb "gs://$BUCKET/$RESULTS/notebooks/"
@@ -189,6 +198,7 @@ gsutil -q cp notebooks/05b_model_B_training.ipynb "gs://$BUCKET/$RESULTS/noteboo
 gsutil -q cp notebooks/05c_model_C_training.ipynb "gs://$BUCKET/$RESULTS/notebooks/"
 gsutil -q cp notebooks/05d_model_D_stacking.ipynb "gs://$BUCKET/$RESULTS/notebooks/"
 gsutil -q cp notebooks/05e_model_E_rich_stacking.ipynb "gs://$BUCKET/$RESULTS/notebooks/"
+gsutil -q cp notebooks/05f_model_F_lap_simulation.ipynb "gs://$BUCKET/$RESULTS/notebooks/"
 gsutil -q cp notebooks/06_model_comparison.ipynb "gs://$BUCKET/$RESULTS/notebooks/"
 
 # Signal completion
@@ -218,6 +228,11 @@ echo "$STARTUP_SCRIPT" > "$STARTUP_FILE"
 # ---------------------------------------------------------------------------
 echo ">>> Creating VM: $VM_NAME in $ZONE..."
 
+MAINT_POLICY=""
+if $USE_GPU; then
+    MAINT_POLICY="--maintenance-policy=TERMINATE"
+fi
+
 gcloud compute instances create "$VM_NAME" \
     --project="$PROJECT" \
     --zone="$ZONE" \
@@ -228,7 +243,7 @@ gcloud compute instances create "$VM_NAME" \
     --boot-disk-size=50GB \
     --scopes=storage-full \
     --metadata-from-file=startup-script="$STARTUP_FILE" \
-    --maintenance-policy=TERMINATE \
+    $MAINT_POLICY \
     --no-restart-on-failure
 
 echo ""

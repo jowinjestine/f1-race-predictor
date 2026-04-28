@@ -42,45 +42,46 @@ def auto_batch_size(n_features: int, default: int = 1024) -> int:
         return default
 
 
-class TabularDataset(Dataset):  # type: ignore[misc]
-    """Simple dataset wrapping numpy arrays as float32 tensors."""
+if TORCH_AVAILABLE:
 
-    def __init__(self, X: NDArray[np.float64], y: NDArray[np.float64] | None = None) -> None:
-        self.X = torch.tensor(X, dtype=torch.float32)
-        self.y = torch.tensor(y, dtype=torch.float32) if y is not None else None
+    class TabularDataset(Dataset):  # type: ignore[misc]
+        """Simple dataset wrapping numpy arrays as float32 tensors."""
 
-    def __len__(self) -> int:
-        return len(self.X)
+        def __init__(self, X: NDArray[np.float64], y: NDArray[np.float64] | None = None) -> None:
+            self.X = torch.tensor(X, dtype=torch.float32)
+            self.y = torch.tensor(y, dtype=torch.float32) if y is not None else None
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, ...]:
-        if self.y is not None:
-            return self.X[idx], self.y[idx]
-        return (self.X[idx],)
+        def __len__(self) -> int:
+            return len(self.X)
 
+        def __getitem__(self, idx: int) -> tuple[torch.Tensor, ...]:
+            if self.y is not None:
+                return self.X[idx], self.y[idx]
+            return (self.X[idx],)
 
-class EarlyStopping:
-    """Track validation loss and restore best model weights."""
+    class EarlyStopping:
+        """Track validation loss and restore best model weights."""
 
-    def __init__(self, patience: int = 15, min_delta: float = 1e-5) -> None:
-        self.patience = patience
-        self.min_delta = min_delta
-        self.counter = 0
-        self.best_loss: float | None = None
-        self.best_state: dict | None = None  # type: ignore[type-arg]
-
-    def step(self, val_loss: float, model: nn.Module) -> bool:
-        """Returns True if training should stop."""
-        if self.best_loss is None or val_loss < self.best_loss - self.min_delta:
-            self.best_loss = val_loss
-            self.best_state = copy.deepcopy(model.state_dict())
+        def __init__(self, patience: int = 15, min_delta: float = 1e-5) -> None:
+            self.patience = patience
+            self.min_delta = min_delta
             self.counter = 0
-            return False
-        self.counter += 1
-        return self.counter >= self.patience
+            self.best_loss: float | None = None
+            self.best_state: dict | None = None  # type: ignore[type-arg]
 
-    def restore(self, model: nn.Module) -> None:
-        if self.best_state is not None:
-            model.load_state_dict(self.best_state)
+        def step(self, val_loss: float, model: nn.Module) -> bool:
+            """Returns True if training should stop."""
+            if self.best_loss is None or val_loss < self.best_loss - self.min_delta:
+                self.best_loss = val_loss
+                self.best_state = copy.deepcopy(model.state_dict())
+                self.counter = 0
+                return False
+            self.counter += 1
+            return self.counter >= self.patience
+
+        def restore(self, model: nn.Module) -> None:
+            if self.best_state is not None:
+                model.load_state_dict(self.best_state)
 
 
 def fit_pytorch_model(

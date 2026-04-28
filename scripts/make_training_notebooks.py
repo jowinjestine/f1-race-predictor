@@ -1,5 +1,5 @@
 # ruff: noqa: RUF001  — notebook display strings use Unicode
-"""Generate training notebooks for Models A, B, C, D, E."""
+"""Generate training notebooks for Models A, B, C, D, E, F."""
 
 import json
 import uuid
@@ -115,7 +115,7 @@ try:
     from f1_predictor.models.architectures import GRU2Layer, FTTransformerWrapper, MLP3Layer
     DL_AVAILABLE = TORCH_DEVICE != "cpu"
     print(f"DL models available: {DL_AVAILABLE}")
-except ImportError:
+except (ImportError, NameError):
     print("DL models not available (torch/rtdl not installed)")"""
 
 HELPERS = '''\
@@ -385,7 +385,7 @@ def run_optuna_round(name, X, y, splitter, groups, n_trials):
         return result["mean_rmse"]
 
     study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(seed=42))
-    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+    study.optimize(objective, n_trials=n_trials, catch=(Exception,), show_progress_bar=False)
     return study.best_params, study.best_value'''
 
 SAVE_ARTIFACTS = '''\
@@ -1930,6 +1930,384 @@ print(f"\\nBest: {best['Meta']}  RMSE={best['Test_RMSE']:.4f}  "
 
 
 # ---------------------------------------------------------------------------
+# Model F notebook: Lap Time Simulation
+# ---------------------------------------------------------------------------
+
+
+def make_model_f() -> list[dict]:
+    cells = [
+        md("# 05f — Model F Training: Lap Time Simulation\n\n"
+           "Predicts **lap_time_ratio** (lap_time / best_quali_time) for autoregressive\n"
+           "race simulation. Positions derived by ranking cumulative predicted times.\n\n"
+           "| Feature Group | Count | Description |\n"
+           "|---|---|---|\n"
+           "| Static | 5 | Grid, quali pace, circuit type |\n"
+           "| Deterministic | 10 | Lap, tyre, pit state |\n"
+           "| Feedback | 6 | Rolling pace, gaps, position |\n"
+           "| Context | 1 | Caution flag |\n"
+           "| **Total** | **22** | |\n\n"
+           "CV: ExpandingWindowSplit (2019→2020, 2019-20→2021, ..., 2019-23→2024 test)."),
+        md("## 0. Setup"),
+        code(CHDIR),
+        code(IMPORTS),
+        code(HELPERS),
+        code(OPTUNA_HELPERS),
+        code(SAVE_ARTIFACTS),
+        md("## 1. Build Training Data"),
+        code("""\
+from f1_predictor.features.simulation_features import (
+    build_simulation_training_data,
+    SIMULATION_FEATURE_COLS,
+)
+
+laps = load_from_gcs_or_local(
+    "data/raw/laps/all_laps.parquet",
+    Path("data/raw/laps/all_laps.parquet"),
+)
+races = load_from_gcs_or_local(
+    "data/raw/race/all_races.parquet",
+    Path("data/raw/race/all_races.parquet"),
+)
+
+df = build_simulation_training_data(laps, races)
+
+# Save processed artifact
+sim_dir = Path("data/processed/simulation")
+sim_dir.mkdir(parents=True, exist_ok=True)
+df.to_parquet(sim_dir / "features_simulation.parquet", index=False)
+
+print(f"Shape: {df.shape}")
+print(f"Seasons: {sorted(df['season'].unique())}")
+print(f"Races: {df.groupby(['season', 'round']).ngroups}")
+print(f"Target stats:\\n{df['lap_time_ratio'].describe()}")
+df.head()"""),
+        code("""\
+FEATURE_COLS = SIMULATION_FEATURE_COLS
+TARGET = "lap_time_ratio"
+ID_COLS = ["season", "round", "event_name", "driver_abbrev", "team"]
+
+df = df.dropna(subset=[TARGET]).reset_index(drop=True)
+
+X = df[FEATURE_COLS]
+y = df[TARGET]
+groups = df["season"].values
+print(f"Features ({len(FEATURE_COLS)}): {FEATURE_COLS}")
+print(f"X shape: {X.shape}, y shape: {y.shape}")
+print(f"NaN counts:\\n{X.isna().sum()}")"""),
+        md("## 2. CV Splitter"),
+        code("""\
+splitter = ExpandingWindowSplit(
+    fold_definitions=[
+        ([2019], 2020),
+        ([2019, 2020], 2021),
+        ([2019, 2020, 2021], 2022),
+        ([2019, 2020, 2021, 2022], 2023),
+    ],
+    test_season=2024,
+)
+print(f"CV folds: {splitter.get_n_splits()}")
+for i, (tr, va) in enumerate(splitter.split(groups)):
+    tr_seasons = sorted(set(groups[tr]))
+    va_seasons = sorted(set(groups[va]))
+    print(f"  Fold {i}: train seasons={tr_seasons}, val seasons={va_seasons}, "
+          f"train={len(tr):,}, val={len(va):,}")"""),
+        md("## 3. Round 1 — Screen Models (default params)"),
+        code("""\
+candidates = get_candidates()
+r1_results = screen_models(candidates, X, y, splitter, groups)
+r1_results[["model", "mean_rmse", "std_rmse", "mean_mae"]]"""),
+        code("""\
+fig, ax = plt.subplots(figsize=(10, 5))
+ax.barh(r1_results["model"], r1_results["mean_rmse"], xerr=r1_results["std_rmse"])
+ax.set_xlabel("Mean RMSE (CV)")
+ax.set_title("Round 1: Model Screening — Model F (Lap Time Ratio)")
+ax.invert_yaxis()
+plt.tight_layout()
+plt.show()"""),
+        code("""\
+top7_names = r1_results["model"].head(7).tolist()
+print(f"Advancing to Round 2: {top7_names}")
+eliminated = r1_results["model"].iloc[7:].tolist()
+print(f"Eliminated: {eliminated}")"""),
+        md("## 4. Round 2 — Optuna HP Tuning (top 7, 10 trials each)"),
+        code("""\
+r2_results = []
+for name in top7_names:
+    print(f"Tuning {name}...")
+    best_params, best_rmse = run_optuna_round(name, X, y, splitter, groups, n_trials=10)
+    r2_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
+    print(f"  Best RMSE: {best_rmse:.4f}")
+
+r2_df = pd.DataFrame(r2_results).sort_values("best_rmse").reset_index(drop=True)
+r2_df[["model", "best_rmse"]]"""),
+        code("""\
+top5_names = r2_df["model"].head(5).tolist()
+r2_best_params = {row["model"]: row["best_params"] for _, row in r2_df.iterrows()}
+print(f"Advancing to Round 3: {top5_names}")"""),
+        md("## 5. Round 3 — Final HP Tuning (top 5, 15 trials each)"),
+        code("""\
+r3_results = []
+for name in top5_names:
+    print(f"Fine-tuning {name}...")
+    best_params, best_rmse = run_optuna_round(name, X, y, splitter, groups, n_trials=15)
+    r3_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
+    print(f"  Best RMSE: {best_rmse:.4f}")
+
+r3_df = pd.DataFrame(r3_results).sort_values("best_rmse").reset_index(drop=True)
+r3_best_params = {row["model"]: row["best_params"] for _, row in r3_df.iterrows()}
+r3_df[["model", "best_rmse"]]"""),
+        md("## 6. Test Set Evaluation (Per-Lap)"),
+        code("""\
+train_idx, test_idx = splitter.get_test_split(groups)
+X_train_full, X_test = X.iloc[train_idx], X.iloc[test_idx]
+y_train_full, y_test = y.iloc[train_idx], y.iloc[test_idx]
+id_train, id_test = df[ID_COLS].iloc[train_idx], df[ID_COLS].iloc[test_idx]
+
+print(f"Train: {X_train_full.shape}, Test: {X_test.shape}")
+print(f"Test season(s): {sorted(df['season'].iloc[test_idx].unique())}")"""),
+        code("""\
+final_results = []
+for name in top5_names:
+    if name in DL_SKIP_OPTUNA:
+        model_cls = MODEL_CLASSES[name]
+        model = model_cls(input_dim=len(FEATURE_COLS))
+    else:
+        params = reconstruct_params(name, r3_best_params[name])
+        model_cls = MODEL_CLASSES[name]
+        model = model_cls(**params)
+    model.fit(X_train_full, y_train_full)
+
+    train_preds = model.predict(X_train_full)
+    train_rmse = np.sqrt(mean_squared_error(y_train_full, train_preds))
+    train_mae = mean_absolute_error(y_train_full, train_preds)
+
+    test_preds = model.predict(X_test)
+    test_rmse = np.sqrt(mean_squared_error(y_test, test_preds))
+    test_mae = mean_absolute_error(y_test, test_preds)
+
+    val_rmse = r3_df.loc[r3_df["model"] == name, "best_rmse"].values[0]
+
+    final_results.append({
+        "model": name,
+        "train_rmse": train_rmse, "train_mae": train_mae,
+        "val_rmse": val_rmse,
+        "test_rmse": test_rmse, "test_mae": test_mae,
+        "overfit_gap": test_rmse - val_rmse,
+    })
+
+    print(f"{name}: train_rmse={train_rmse:.4f}, val_rmse={val_rmse:.4f}, "
+          f"test_rmse={test_rmse:.4f}, gap={test_rmse - val_rmse:.4f}")
+
+final_df = pd.DataFrame(final_results).sort_values("test_rmse").reset_index(drop=True)
+final_df"""),
+        code("""\
+fig, ax = plt.subplots(figsize=(10, 5))
+x = np.arange(len(final_df))
+w = 0.25
+ax.bar(x - w, final_df["train_rmse"], w, label="Train RMSE")
+ax.bar(x, final_df["val_rmse"], w, label="Val RMSE")
+ax.bar(x + w, final_df["test_rmse"], w, label="Test RMSE")
+ax.set_xticks(x)
+ax.set_xticklabels(final_df["model"], rotation=30, ha="right")
+ax.set_ylabel("RMSE (lap_time_ratio)")
+ax.set_title("Model F — Final 5 Models: Train / Val / Test RMSE")
+ax.legend()
+plt.tight_layout()
+plt.show()"""),
+        md("## 7. Full Simulation Evaluation (2024 Test Races)\n\n"
+           "Run autoregressive simulation on test season races and compare\n"
+           "predicted final positions to actual finishing positions."),
+        code("""\
+from scipy.stats import spearmanr
+from f1_predictor.simulation.engine import RaceSimulator
+from f1_predictor.simulation.defaults import build_circuit_defaults
+
+circuit_defaults = build_circuit_defaults(laps)
+
+# Use best per-lap model for simulation
+best_model_name = final_df.iloc[0]["model"]
+if best_model_name in DL_SKIP_OPTUNA:
+    best_model = MODEL_CLASSES[best_model_name](input_dim=len(FEATURE_COLS))
+else:
+    best_params = reconstruct_params(best_model_name, r3_best_params[best_model_name])
+    best_model = MODEL_CLASSES[best_model_name](**best_params)
+best_model.fit(X_train_full, y_train_full)
+
+simulator = RaceSimulator(best_model, circuit_defaults)
+print(f"Simulator ready with {best_model_name}")
+print(f"Circuits available: {len(circuit_defaults)}")"""),
+        code("""\
+# Get 2024 test races with qualifying data
+test_races = races[races["season"] == 2024].copy()
+test_race_list = test_races.groupby(["season", "round", "event_name"]).first().reset_index()
+
+sim_results = []
+for _, race_row in test_race_list.iterrows():
+    event = race_row["event_name"]
+    from f1_predictor.features.race_features import LOCATION_ALIASES
+    event_norm = LOCATION_ALIASES.get(event, event)
+
+    if event_norm not in circuit_defaults:
+        print(f"  Skipping {event} (no circuit data)")
+        continue
+
+    # Get drivers for this race
+    race_drivers = test_races[
+        (test_races["season"] == race_row["season"])
+        & (test_races["round"] == race_row["round"])
+    ].copy()
+
+    drivers_input = []
+    actual_positions = {}
+    for _, drv in race_drivers.iterrows():
+        q1 = drv.get("q1_time_sec")
+        q2 = drv.get("q2_time_sec")
+        q3 = drv.get("q3_time_sec")
+        q_times = [t for t in [q1, q2, q3] if pd.notna(t)]
+        if not q_times or pd.isna(drv.get("grid_position")):
+            continue
+
+        drivers_input.append({
+            "driver": drv["driver_abbrev"],
+            "grid_position": int(drv["grid_position"]),
+            "q1": q1 if pd.notna(q1) else None,
+            "q2": q2 if pd.notna(q2) else None,
+            "q3": q3 if pd.notna(q3) else None,
+            "initial_tyre": "MEDIUM",
+        })
+        if pd.notna(drv.get("finish_position")):
+            actual_positions[drv["driver_abbrev"]] = int(drv["finish_position"])
+
+    if len(drivers_input) < 10:
+        print(f"  Skipping {event} (only {len(drivers_input)} drivers with quali data)")
+        continue
+
+    try:
+        result = simulator.simulate(event_norm, drivers_input)
+        for fr in result.final_results:
+            if fr["driver"] in actual_positions:
+                sim_results.append({
+                    "event": event,
+                    "driver": fr["driver"],
+                    "predicted_pos": fr["position"],
+                    "actual_pos": actual_positions[fr["driver"]],
+                })
+        print(f"  {event}: simulated {len(drivers_input)} drivers")
+    except Exception as e:
+        print(f"  {event}: simulation failed — {e}")
+
+sim_df = pd.DataFrame(sim_results)
+print(f"\\nTotal driver-race predictions: {len(sim_df)}")"""),
+        code("""\
+# Compute simulation-level metrics
+from sklearn.metrics import r2_score
+
+if len(sim_df) > 0:
+    sim_rmse = np.sqrt(mean_squared_error(sim_df["actual_pos"], sim_df["predicted_pos"]))
+    sim_mae = mean_absolute_error(sim_df["actual_pos"], sim_df["predicted_pos"])
+    sim_r2 = r2_score(sim_df["actual_pos"], sim_df["predicted_pos"])
+    w1 = np.mean(np.abs(sim_df["actual_pos"] - sim_df["predicted_pos"]) <= 1) * 100
+    w3 = np.mean(np.abs(sim_df["actual_pos"] - sim_df["predicted_pos"]) <= 3) * 100
+
+    # Per-race Spearman
+    spear_vals = []
+    for event, grp in sim_df.groupby("event"):
+        if len(grp) >= 3 and grp["actual_pos"].std() > 0 and grp["predicted_pos"].std() > 0:
+            rho, _ = spearmanr(grp["actual_pos"], grp["predicted_pos"])
+            spear_vals.append(rho)
+    spearman = np.mean(spear_vals) if spear_vals else float("nan")
+
+    print("=" * 60)
+    print("MODEL F SIMULATION RESULTS (2024 Test Season)")
+    print("=" * 60)
+    print(f"  RMSE:        {sim_rmse:.4f}")
+    print(f"  MAE:         {sim_mae:.4f}")
+    print(f"  R2:          {sim_r2:.4f}")
+    print(f"  Within-1:    {w1:.1f}%")
+    print(f"  Within-3:    {w3:.1f}%")
+    print(f"  Spearman:    {spearman:.4f}")
+    print(f"  Races:       {sim_df['event'].nunique()}")
+else:
+    print("No simulation results to evaluate.")"""),
+        code("""\
+# Scatter plot: predicted vs actual positions
+if len(sim_df) > 0:
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    ax = axes[0]
+    ax.scatter(sim_df["actual_pos"], sim_df["predicted_pos"], alpha=0.3, s=20)
+    ax.plot([1, 20], [1, 20], "r--", lw=1)
+    ax.set_xlabel("Actual Position")
+    ax.set_ylabel("Predicted Position")
+    ax.set_title(f"Model F Simulation: Predicted vs Actual (RMSE={sim_rmse:.2f})")
+
+    ax = axes[1]
+    errors = sim_df["predicted_pos"] - sim_df["actual_pos"]
+    ax.hist(errors, bins=range(-15, 16), edgecolor="black", alpha=0.7)
+    ax.axvline(0, color="red", linestyle="--")
+    ax.set_xlabel("Position Error (predicted - actual)")
+    ax.set_ylabel("Count")
+    ax.set_title(f"Error Distribution (Within-3: {w3:.1f}%)")
+
+    plt.tight_layout()
+    plt.show()"""),
+        md("## 8. Save Artifacts"),
+        code("""\
+for name in top5_names:
+    if name in DL_SKIP_OPTUNA:
+        model_cls = MODEL_CLASSES[name]
+        model = model_cls(input_dim=len(FEATURE_COLS))
+    else:
+        params = reconstruct_params(name, r3_best_params[name])
+        model_cls = MODEL_CLASSES[name]
+        model = model_cls(**params)
+    model.fit(X_train_full, y_train_full)
+
+    save_predictions(model, X_train_full, y_train_full, id_train, "F", name, "Training")
+    save_predictions(model, X_test, y_test, id_test, "F", name, "Test")
+
+    # OOF validation predictions
+    oof_preds = np.full(len(X), np.nan)
+    for tr_idx, va_idx in splitter.split(groups):
+        import sklearn.base
+        fold_model = sklearn.base.clone(model)
+        fold_model.fit(X.iloc[tr_idx], y.iloc[tr_idx])
+        oof_preds[va_idx] = fold_model.predict(X.iloc[va_idx])
+
+    val_mask = ~np.isnan(oof_preds)
+    val_out = df[ID_COLS].loc[val_mask].copy()
+    val_out["y_true"] = y.loc[val_mask].values
+    val_out["y_pred"] = oof_preds[val_mask]
+    fname = f"model_F_{name}_Validation.parquet"
+    uri = save_training_parquet(val_out, fname, TRAINING_DIR)
+    print(f"  Saved {fname} -> {uri}")
+
+    save_model_pkl(model, "F", name)
+
+print("\\nDone! All Model F artifacts saved.")"""),
+        md("## Summary"),
+        code("""\
+print("=" * 60)
+print("MODEL F (LAP TIME SIMULATION) TRAINING COMPLETE")
+print("=" * 60)
+print(f"\\nPer-lap evaluation (top 5, sorted by test RMSE):")
+for _, row in final_df.iterrows():
+    print(f"  {row['model']:20s}  test_rmse={row['test_rmse']:.6f}  "
+          f"gap={row['overfit_gap']:.6f}")
+if len(sim_df) > 0:
+    print(f"\\nFull simulation (2024 test season):")
+    print(f"  Position RMSE: {sim_rmse:.4f}")
+    print(f"  Spearman:      {spearman:.4f}")
+    print(f"  Within-3:      {w3:.1f}%")
+print(f"\\nArtifacts saved to:")
+print(f"  Predictions: {TRAINING_DIR}")
+print(f"  Models: {MODEL_DIR}")
+print(f"  Features: data/processed/simulation/")"""),
+    ]
+    return cells
+
+
+# ---------------------------------------------------------------------------
 # Notebook 06: Model Comparison
 # ---------------------------------------------------------------------------
 
@@ -1979,7 +2357,7 @@ TRAINING_DIR = Path("data/training")
 TRAINING_DIR.mkdir(parents=True, exist_ok=True)
 
 # Sync all model artifacts from GCS
-for mt in ["A", "B", "C", "D", "E"]:
+for mt in ["A", "B", "C", "D", "E", "F"]:
     sync_training_from_gcs(mt, TRAINING_DIR)
 print("Synced all training artifacts from GCS.")"""),
         md("## 1. Load All Prediction Parquets"),
@@ -2317,6 +2695,7 @@ def main():
         "05c_model_C_training.ipynb": make_model_c(),
         "05d_model_D_stacking.ipynb": make_model_d(),
         "05e_model_E_rich_stacking.ipynb": make_model_e(),
+        "05f_model_F_lap_simulation.ipynb": make_model_f(),
         "06_model_comparison.ipynb": make_model_comparison(),
     }
     for name, cells in notebooks.items():
