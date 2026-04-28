@@ -50,9 +50,7 @@ class _GRUNet(nn.Module):  # type: ignore[misc]
 
 
 class _MLPNet(nn.Module):  # type: ignore[misc]
-    def __init__(
-        self, input_dim: int, hidden1: int, hidden2: int, dropout: float
-    ) -> None:
+    def __init__(self, input_dim: int, hidden1: int, hidden2: int, dropout: float) -> None:
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, hidden1),

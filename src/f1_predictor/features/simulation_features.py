@@ -74,14 +74,12 @@ def build_simulation_training_data(
     # --- Circuit type features ---
     loc_map = races[["season", "round", "location"]].drop_duplicates()
     loc_map["location_norm"] = loc_map["location"].map(_normalise_location)
-    df = df.merge(
-        loc_map[["season", "round", "location_norm"]], on=RACE_KEY, how="left"
-    )
+    df = df.merge(loc_map[["season", "round", "location_norm"]], on=RACE_KEY, how="left")
     df["circuit_street"] = df["location_norm"].isin(STREET_CIRCUITS).astype(int)
     df["circuit_hybrid"] = df["location_norm"].isin(HYBRID_CIRCUITS).astype(int)
-    df["circuit_permanent"] = (
-        (df["circuit_street"] == 0) & (df["circuit_hybrid"] == 0)
-    ).astype(int)
+    df["circuit_permanent"] = ((df["circuit_street"] == 0) & (df["circuit_hybrid"] == 0)).astype(
+        int
+    )
 
     # --- Lap dynamics features (reuse from lap_features.py) ---
     df = _add_rolling_pace(df)
@@ -97,9 +95,7 @@ def build_simulation_training_data(
 
     # --- Position change from lap 1 ---
     lap1_pos = (
-        df[df["lap_number"] == 1]
-        .set_index(DRIVER_RACE_KEY)["position"]
-        .rename("lap1_position")
+        df[df["lap_number"] == 1].set_index(DRIVER_RACE_KEY)["position"].rename("lap1_position")
     )
     df = df.join(lap1_pos, on=DRIVER_RACE_KEY)
     df["position_change_from_lap1"] = df["lap1_position"] - df["position"]

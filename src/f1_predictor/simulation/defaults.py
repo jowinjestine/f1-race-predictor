@@ -32,13 +32,13 @@ def build_circuit_defaults(laps: pd.DataFrame) -> dict[str, dict[str, Any]]:
 
         # Pit stop count: mode of final pit_stop_count per driver per race
         if "is_pit_out_lap" in grp.columns:
-            final_laps = grp.sort_values("lap_number").groupby(
-                ["season", "round", "driver_abbrev"]
-            ).tail(1)
+            final_laps = (
+                grp.sort_values("lap_number").groupby(["season", "round", "driver_abbrev"]).tail(1)
+            )
             if "pit_stop_count" not in final_laps.columns:
-                pit_counts = final_laps.groupby(
-                    ["season", "round", "driver_abbrev"]
-                )["is_pit_out_lap"].sum()
+                pit_counts = final_laps.groupby(["season", "round", "driver_abbrev"])[
+                    "is_pit_out_lap"
+                ].sum()
             else:
                 pit_counts = final_laps["pit_stop_count"]
             typical_stops = int(pit_counts.median()) if len(pit_counts) > 0 else 1
@@ -50,9 +50,9 @@ def build_circuit_defaults(laps: pd.DataFrame) -> dict[str, dict[str, Any]]:
         pit_windows: list[int] = []
         if len(pit_laps_data) > 0:
             for stint_num in range(1, typical_stops + 1):
-                stint_pits = pit_laps_data.groupby(
-                    ["season", "round", "driver_abbrev"]
-                ).nth(stint_num - 1)
+                stint_pits = pit_laps_data.groupby(["season", "round", "driver_abbrev"]).nth(
+                    stint_num - 1
+                )
                 if len(stint_pits) > 0 and "lap_number" in stint_pits.columns:
                     pit_windows.append(int(stint_pits["lap_number"].median()))
                 elif len(stint_pits) > 0:
@@ -75,9 +75,7 @@ def build_circuit_defaults(laps: pd.DataFrame) -> dict[str, dict[str, Any]]:
     return defaults
 
 
-def _get_common_compound_sequence(
-    race_laps: pd.DataFrame, n_stops: int
-) -> list[str]:
+def _get_common_compound_sequence(race_laps: pd.DataFrame, n_stops: int) -> list[str]:
     """Find the most common compound sequence for a circuit."""
     if "tire_compound" not in race_laps.columns:
         return ["MEDIUM", "HARD"] if n_stops <= 1 else ["SOFT", "MEDIUM", "HARD"]
@@ -85,10 +83,7 @@ def _get_common_compound_sequence(
     sequences: list[tuple[str, ...]] = []
     for (_, _, _), drv_grp in race_laps.groupby(["season", "round", "driver_abbrev"]):
         compounds = (
-            drv_grp.sort_values("lap_number")
-            .groupby("stint")["tire_compound"]
-            .first()
-            .tolist()
+            drv_grp.sort_values("lap_number").groupby("stint")["tire_compound"].first().tolist()
         )
         if len(compounds) >= 2:
             sequences.append(tuple(compounds))
@@ -97,8 +92,23 @@ def _get_common_compound_sequence(
         return ["MEDIUM", "HARD"] if n_stops <= 1 else ["SOFT", "MEDIUM", "HARD"]
 
     from collections import Counter
+
     most_common = Counter(sequences).most_common(1)[0][0]
     return list(most_common)
+
+
+def build_field_median_curves(
+    laps: pd.DataFrame,
+    races: pd.DataFrame,
+) -> dict[str, dict[int, float]]:
+    """Compute per-circuit median lap_time_ratio at each lap number.
+
+    Convenience re-export from delta_features. Use at simulation time
+    alongside build_circuit_defaults.
+    """
+    from f1_predictor.features.delta_features import build_field_median_curves as _build
+
+    return _build(laps, races)
 
 
 def get_default_strategy(

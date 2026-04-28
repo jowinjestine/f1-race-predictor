@@ -11,9 +11,7 @@ def _rocminfo_gpu_name() -> str | None:
     if not shutil.which("rocminfo"):
         return None
     try:
-        result = subprocess.run(
-            ["rocminfo"], capture_output=True, text=True, timeout=10
-        )
+        result = subprocess.run(["rocminfo"], capture_output=True, text=True, timeout=10)
     except (subprocess.TimeoutExpired, OSError):
         return None
     if result.returncode != 0:

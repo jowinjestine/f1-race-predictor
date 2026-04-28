@@ -1,5 +1,5 @@
 # ruff: noqa: RUF001  — notebook display strings use Unicode
-"""Generate training notebooks for Models A, B, C, D, E, F."""
+"""Generate training notebooks for Models A, B, C, D, E, F, G, H, I."""
 
 import json
 import uuid
@@ -2308,6 +2308,1463 @@ print(f"  Features: data/processed/simulation/")"""),
 
 
 # ---------------------------------------------------------------------------
+# Model G notebook: Temporal Sequence Models
+# ---------------------------------------------------------------------------
+
+def make_model_g() -> list[dict]:
+    cells = [
+        md("# 05g — Model G Training: Temporal Sequence Models\n\n"
+           "Treats each driver's race as a **time series**. A sliding window of\n"
+           "the last W laps' features predicts the current lap's `lap_time_ratio`.\n\n"
+           "10 GPU candidates: GRU/LSTM/TCN/Transformer/CNN variants.\n"
+           "All models Optuna-tunable (no skip).\n\n"
+           "CV: ExpandingWindowSplit (2019→2020, ..., 2019-23→2024 test)."),
+        md("## 0. Setup"),
+        code(CHDIR),
+        code(IMPORTS),
+        code(SAVE_ARTIFACTS),
+        md("## 1. Build Sequence Training Data"),
+        code("""\
+from f1_predictor.features.simulation_features import (
+    build_simulation_training_data,
+    SIMULATION_FEATURE_COLS,
+)
+from f1_predictor.features.sequence_features import (
+    build_sequence_training_data,
+    slice_window,
+)
+
+laps = load_from_gcs_or_local(
+    "data/raw/laps/all_laps.parquet",
+    Path("data/raw/laps/all_laps.parquet"),
+)
+races = load_from_gcs_or_local(
+    "data/raw/race/all_races.parquet",
+    Path("data/raw/race/all_races.parquet"),
+)
+
+# Build tabular simulation data first
+df_sim = build_simulation_training_data(laps, races)
+print(f"Tabular shape: {df_sim.shape}")
+
+# Reshape into windowed sequences (max_window=10, sliced per candidate)
+MAX_WINDOW = 10
+X_seq, y_seq, id_df = build_sequence_training_data(df_sim, max_window=MAX_WINDOW)
+print(f"X_seq shape: {X_seq.shape}  (samples, window, features+mask)")
+print(f"y shape: {y_seq.shape}")
+print(f"Target stats:\\n{pd.Series(y_seq).describe()}")"""),
+        code("""\
+# seasons for CV split — use id_df
+groups = id_df["season"].values
+n_features_seq = X_seq.shape[2]  # includes mask channel
+print(f"Sequence features (incl mask): {n_features_seq}")
+print(f"Seasons: {sorted(set(groups))}")"""),
+        md("## 2. CV Splitter"),
+        code("""\
+splitter = ExpandingWindowSplit(
+    fold_definitions=[
+        ([2019], 2020),
+        ([2019, 2020], 2021),
+        ([2019, 2020, 2021], 2022),
+        ([2019, 2020, 2021, 2022], 2023),
+    ],
+    test_season=2024,
+)
+print(f"CV folds: {splitter.get_n_splits()}")
+for i, (tr, va) in enumerate(splitter.split(groups)):
+    tr_seasons = sorted(set(groups[tr]))
+    va_seasons = sorted(set(groups[va]))
+    print(f"  Fold {i}: train seasons={tr_seasons}, val seasons={va_seasons}, "
+          f"train={len(tr):,}, val={len(va):,}")"""),
+        md("## 3. Model Candidates and Helpers\n\n"
+           "10 sequence model candidates, all Optuna-tunable."),
+        code("""\
+from f1_predictor.models.sequence_architectures import (
+    SeqGRU_Shallow, SeqGRU_Deep, SeqGRU_Bidir,
+    SeqLSTM_Shallow, SeqLSTM_Deep, SeqLSTM_Bidir,
+    SeqTCN, SeqTransformer, SeqGRU_Attn, SeqCNN1D,
+)
+
+DL_SKIP_OPTUNA = set()  # all models tunable
+NAN_TOLERANT = set()  # no tree-based models
+
+MODEL_CLASSES_G = {
+    "SeqGRU_Shallow": SeqGRU_Shallow,
+    "SeqGRU_Deep": SeqGRU_Deep,
+    "SeqGRU_Bidir": SeqGRU_Bidir,
+    "SeqLSTM_Shallow": SeqLSTM_Shallow,
+    "SeqLSTM_Deep": SeqLSTM_Deep,
+    "SeqLSTM_Bidir": SeqLSTM_Bidir,
+    "SeqTCN": SeqTCN,
+    "SeqTransformer": SeqTransformer,
+    "SeqGRU_Attn": SeqGRU_Attn,
+    "SeqCNN1D": SeqCNN1D,
+}
+
+
+def get_candidates_g():
+    candidates = {}
+    if not DL_AVAILABLE:
+        print("WARNING: No GPU — sequence models require PyTorch with CUDA/ROCm")
+        return candidates
+    for name, cls in MODEL_CLASSES_G.items():
+        candidates[name] = cls(n_features=n_features_seq)
+    print(f"Candidates ({len(candidates)}): {list(candidates.keys())}")
+    return candidates
+
+
+def _seq_optuna_space(trial, model_name):
+    params = {
+        "n_features": n_features_seq,
+        "window_size": trial.suggest_int("window_size", 3, MAX_WINDOW),
+        "hidden_dim": trial.suggest_categorical("hidden_dim", [32, 64, 128, 256]),
+        "dropout": trial.suggest_float("dropout", 0.05, 0.5),
+        "lr": trial.suggest_float("lr", 1e-4, 1e-2, log=True),
+        "weight_decay": trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True),
+        "batch_size": trial.suggest_categorical("batch_size", [512, 1024, 2048]),
+    }
+    if model_name in ("SeqGRU_Shallow", "SeqGRU_Deep", "SeqGRU_Bidir",
+                       "SeqLSTM_Shallow", "SeqLSTM_Deep", "SeqLSTM_Bidir",
+                       "SeqGRU_Attn"):
+        params["num_layers"] = trial.suggest_int("num_layers", 1, 4)
+    if model_name in ("SeqTCN", "SeqCNN1D"):
+        params["kernel_size"] = trial.suggest_categorical("kernel_size", [3, 5, 7])
+    if model_name == "SeqTCN":
+        params["num_layers"] = trial.suggest_int("num_layers", 2, 6)
+    if model_name == "SeqTransformer":
+        params["num_layers"] = trial.suggest_int("num_layers", 1, 4)
+        params["n_heads"] = trial.suggest_categorical("n_heads", [2, 4, 8])
+        # d_model must be divisible by n_heads
+        hd = params["hidden_dim"]
+        nh = params["n_heads"]
+        if hd % nh != 0:
+            params["hidden_dim"] = max(nh, (hd // nh) * nh)
+    return params
+
+
+def get_optuna_param_space_g(name, trial):
+    return _seq_optuna_space(trial, name)
+
+
+def reconstruct_params_g(name, best_params):
+    params = dict(best_params)
+    params["n_features"] = n_features_seq
+    return params"""),
+        code("""\
+def cv_evaluate_g(model, X_seq_full, y_full, splitter, groups):
+    from sklearn.metrics import mean_squared_error, mean_absolute_error
+    rmses, maes = [], []
+    for tr_idx, va_idx in splitter.split(groups):
+        import sklearn.base
+        m = sklearn.base.clone(model)
+        X_tr, y_tr = X_seq_full[tr_idx], y_full[tr_idx]
+        X_va, y_va = X_seq_full[va_idx], y_full[va_idx]
+        m.fit(X_tr, y_tr)
+        preds = m.predict(X_va)
+        rmses.append(np.sqrt(mean_squared_error(y_va, preds)))
+        maes.append(mean_absolute_error(y_va, preds))
+    return {"mean_rmse": np.mean(rmses), "std_rmse": np.std(rmses), "mean_mae": np.mean(maes)}
+
+
+def screen_models_g(candidates, X_seq_full, y_full, splitter, groups):
+    rows = []
+    for name, model in candidates.items():
+        try:
+            result = cv_evaluate_g(model, X_seq_full, y_full, splitter, groups)
+            rows.append({"model": name, **result})
+            print(f"  {name}: RMSE={result['mean_rmse']:.4f}")
+        except Exception as e:
+            print(f"  {name}: FAILED — {e}")
+    return pd.DataFrame(rows).sort_values("mean_rmse").reset_index(drop=True)
+
+
+def run_optuna_round_g(name, X_seq_full, y_full, splitter, groups, n_trials):
+    def objective(trial):
+        params = get_optuna_param_space_g(name, trial)
+        ws = params.pop("window_size", MAX_WINDOW)
+        model_cls = MODEL_CLASSES_G[name]
+        model = model_cls(**params, window_size=ws)
+        # Slice sequences to candidate's window size
+        X_sliced = slice_window(X_seq_full, ws)
+        result = cv_evaluate_g(model, X_sliced, y_full, splitter, groups)
+        return result["mean_rmse"]
+    study = optuna.create_study(
+        direction="minimize",
+        sampler=optuna.samplers.TPESampler(seed=42),
+    )
+    study.optimize(
+        objective, n_trials=n_trials,
+        catch=(Exception,), show_progress_bar=False,
+    )
+    return study.best_params, study.best_value"""),
+        md("## 4. Round 1 — Screen Models"),
+        code("""\
+candidates = get_candidates_g()
+r1_results = screen_models_g(candidates, X_seq, y_seq, splitter, groups)
+r1_results[["model", "mean_rmse", "std_rmse", "mean_mae"]]"""),
+        code("""\
+fig, ax = plt.subplots(figsize=(10, 5))
+ax.barh(r1_results["model"], r1_results["mean_rmse"], xerr=r1_results["std_rmse"])
+ax.set_xlabel("Mean RMSE (CV)")
+ax.set_title("Round 1: Model Screening — Model G (Temporal Sequences)")
+ax.invert_yaxis()
+plt.tight_layout()
+plt.show()"""),
+        code("""\
+top7_names = r1_results["model"].head(7).tolist()
+print(f"Advancing to Round 2: {top7_names}")
+eliminated = r1_results["model"].iloc[7:].tolist()
+print(f"Eliminated: {eliminated}")"""),
+        md("## 5. Round 2 — Optuna (top 7, 10 trials each)"),
+        code("""\
+r2_results = []
+for name in top7_names:
+    print(f"Tuning {name}...")
+    best_params, best_rmse = run_optuna_round_g(
+        name, X_seq, y_seq, splitter, groups, n_trials=10)
+    r2_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
+    print(f"  Best RMSE: {best_rmse:.4f}")
+
+r2_df = pd.DataFrame(r2_results).sort_values("best_rmse").reset_index(drop=True)
+r2_df[["model", "best_rmse"]]"""),
+        code("""\
+top5_names = r2_df["model"].head(5).tolist()
+r2_best_params = {row["model"]: row["best_params"] for _, row in r2_df.iterrows()}
+print(f"Advancing to Round 3: {top5_names}")"""),
+        md("## 6. Round 3 — Final Tuning (top 5, 15 trials each)"),
+        code("""\
+r3_results = []
+for name in top5_names:
+    print(f"Fine-tuning {name}...")
+    best_params, best_rmse = run_optuna_round_g(
+        name, X_seq, y_seq, splitter, groups, n_trials=15)
+    r3_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
+    print(f"  Best RMSE: {best_rmse:.4f}")
+
+r3_df = pd.DataFrame(r3_results).sort_values("best_rmse").reset_index(drop=True)
+r3_best_params = {row["model"]: row["best_params"] for _, row in r3_df.iterrows()}
+r3_df[["model", "best_rmse"]]"""),
+        md("## 7. Test Set Evaluation (Per-Lap)"),
+        code("""\
+train_idx, test_idx = splitter.get_test_split(groups)
+X_seq_train, X_seq_test = X_seq[train_idx], X_seq[test_idx]
+y_train_full, y_test = y_seq[train_idx], y_seq[test_idx]
+id_train, id_test = id_df.iloc[train_idx], id_df.iloc[test_idx]
+
+print(f"Train: {X_seq_train.shape}, Test: {X_seq_test.shape}")
+print(f"Test season(s): {sorted(set(groups[test_idx]))}")"""),
+        code("""\
+final_results = []
+for name in top5_names:
+    params = reconstruct_params_g(name, r3_best_params[name])
+    ws = params.pop("window_size", MAX_WINDOW)
+    model_cls = MODEL_CLASSES_G[name]
+    model = model_cls(**params, window_size=ws)
+
+    X_tr_sliced = slice_window(X_seq_train, ws)
+    X_te_sliced = slice_window(X_seq_test, ws)
+
+    model.fit(X_tr_sliced, y_train_full)
+
+    train_preds = model.predict(X_tr_sliced)
+    train_rmse = np.sqrt(mean_squared_error(y_train_full, train_preds))
+
+    test_preds = model.predict(X_te_sliced)
+    test_rmse = np.sqrt(mean_squared_error(y_test, test_preds))
+
+    val_rmse = r3_df.loc[r3_df["model"] == name, "best_rmse"].values[0]
+
+    final_results.append({
+        "model": name,
+        "train_rmse": train_rmse, "val_rmse": val_rmse,
+        "test_rmse": test_rmse, "overfit_gap": test_rmse - val_rmse,
+        "window_size": ws,
+    })
+    print(f"{name} (ws={ws}): train_rmse={train_rmse:.4f}, "
+          f"val_rmse={val_rmse:.4f}, test_rmse={test_rmse:.4f}")
+
+final_df = pd.DataFrame(final_results).sort_values("test_rmse").reset_index(drop=True)
+final_df"""),
+        md("## 8. Sequence Simulation (2024 Test Races)"),
+        code("""\
+from f1_predictor.simulation.sequence_simulator import SequenceRaceSimulator
+from f1_predictor.simulation.defaults import build_circuit_defaults
+from f1_predictor.simulation.evaluation import evaluate_simulation
+from f1_predictor.features.race_features import LOCATION_ALIASES
+
+circuit_defaults = build_circuit_defaults(laps)
+
+# Retrain best model on full training set
+best_row = final_df.iloc[0]
+best_model_name = best_row["model"]
+best_ws = int(best_row["window_size"])
+best_params = reconstruct_params_g(best_model_name, r3_best_params[best_model_name])
+best_params.pop("window_size", None)
+best_model = MODEL_CLASSES_G[best_model_name](**best_params, window_size=best_ws)
+X_tr_sliced = slice_window(X_seq_train, best_ws)
+best_model.fit(X_tr_sliced, y_train_full)
+
+seq_sim = SequenceRaceSimulator(best_model, circuit_defaults, window_size=best_ws)
+print(f"Sequence simulator: {best_model_name} (window={best_ws})")"""),
+        code("""\
+test_races = races[races["season"] == 2024].copy()
+test_race_list = test_races.groupby(
+    ["season", "round", "event_name"]
+).first().reset_index()
+
+sim_results = []
+for _, race_row in test_race_list.iterrows():
+    event = race_row["event_name"]
+    event_norm = LOCATION_ALIASES.get(event, event)
+
+    if event_norm not in circuit_defaults:
+        print(f"  Skipping {event} (no circuit data)")
+        continue
+
+    race_drivers = test_races[
+        (test_races["season"] == race_row["season"])
+        & (test_races["round"] == race_row["round"])
+    ].copy()
+
+    drivers_input = []
+    actual_positions = {}
+    for _, drv in race_drivers.iterrows():
+        q1 = drv.get("q1_time_sec")
+        q2 = drv.get("q2_time_sec")
+        q3 = drv.get("q3_time_sec")
+        q_times = [t for t in [q1, q2, q3] if pd.notna(t)]
+        if not q_times or pd.isna(drv.get("grid_position")):
+            continue
+        drivers_input.append({
+            "driver": drv["driver_abbrev"],
+            "grid_position": int(drv["grid_position"]),
+            "q1": q1 if pd.notna(q1) else None,
+            "q2": q2 if pd.notna(q2) else None,
+            "q3": q3 if pd.notna(q3) else None,
+            "initial_tyre": "MEDIUM",
+        })
+        if pd.notna(drv.get("finish_position")):
+            actual_positions[drv["driver_abbrev"]] = int(drv["finish_position"])
+
+    if len(drivers_input) < 10:
+        continue
+
+    try:
+        result = seq_sim.simulate(event_norm, drivers_input)
+        for fr in result.final_results:
+            if fr["driver"] in actual_positions:
+                sim_results.append({
+                    "event": event, "driver": fr["driver"],
+                    "predicted_pos": fr["position"],
+                    "actual_pos": actual_positions[fr["driver"]],
+                })
+        print(f"  {event}: simulated {len(drivers_input)} drivers")
+    except Exception as e:
+        print(f"  {event}: failed — {e}")
+
+sim_df = pd.DataFrame(sim_results)
+print(f"\\nSimulation results: {len(sim_df)} driver-race predictions")"""),
+        code("""\
+if len(sim_df) > 0:
+    sim_metrics = evaluate_simulation(sim_df)
+    print("=" * 60)
+    print("MODEL G — SEQUENCE SIMULATION (2024)")
+    print("=" * 60)
+    for k, v in sim_metrics.items():
+        print(f"  {k:20s}: {v}")"""),
+        md("## 9. Save Artifacts"),
+        code("""\
+ID_COLS_SEQ = ["season", "round", "driver_abbrev", "lap_number"]
+
+for name in top5_names:
+    params = reconstruct_params_g(name, r3_best_params[name])
+    ws = params.pop("window_size", MAX_WINDOW)
+    model_cls = MODEL_CLASSES_G[name]
+    model = model_cls(**params, window_size=ws)
+
+    X_tr_s = slice_window(X_seq_train, ws)
+    X_te_s = slice_window(X_seq_test, ws)
+    model.fit(X_tr_s, y_train_full)
+
+    # Training predictions
+    train_preds = model.predict(X_tr_s)
+    out = id_train.copy()
+    out["y_true"] = y_train_full
+    out["y_pred"] = train_preds
+    fname = f"model_G_{name}_Training.parquet"
+    uri = save_training_parquet(out, fname, TRAINING_DIR)
+    print(f"  Saved {fname} -> {uri}")
+
+    # Test predictions
+    test_preds = model.predict(X_te_s)
+    out = id_test.copy()
+    out["y_true"] = y_test
+    out["y_pred"] = test_preds
+    fname = f"model_G_{name}_Test.parquet"
+    uri = save_training_parquet(out, fname, TRAINING_DIR)
+    print(f"  Saved {fname} -> {uri}")
+
+    # OOF validation predictions
+    oof_preds = np.full(len(y_seq), np.nan)
+    for tr_idx, va_idx in splitter.split(groups):
+        import sklearn.base
+        fold_model = sklearn.base.clone(model)
+        X_tr_fold = slice_window(X_seq[tr_idx], ws)
+        fold_model.fit(X_tr_fold, y_seq[tr_idx])
+        X_va_fold = slice_window(X_seq[va_idx], ws)
+        oof_preds[va_idx] = fold_model.predict(X_va_fold)
+
+    val_mask = ~np.isnan(oof_preds)
+    val_out = id_df.loc[val_mask].copy()
+    val_out["y_true"] = y_seq[val_mask]
+    val_out["y_pred"] = oof_preds[val_mask]
+    fname = f"model_G_{name}_Validation.parquet"
+    uri = save_training_parquet(val_out, fname, TRAINING_DIR)
+    print(f"  Saved {fname} -> {uri}")
+
+    save_model_pkl(model, "G", name)
+
+print("\\nDone! All Model G artifacts saved.")"""),
+        md("## Summary"),
+        code("""\
+print("=" * 60)
+print("MODEL G (TEMPORAL SEQUENCE) TRAINING COMPLETE")
+print("=" * 60)
+print(f"\\nPer-lap evaluation (top 5, sorted by test RMSE):")
+for _, row in final_df.iterrows():
+    print(f"  {row['model']:25s} ws={int(row['window_size'])} "
+          f"test_rmse={row['test_rmse']:.6f} gap={row['overfit_gap']:.6f}")
+
+if len(sim_df) > 0:
+    print(f"\\nSequence simulation (2024):")
+    print(f"  Position RMSE: {sim_metrics['position_rmse']:.4f}")
+    print(f"  Spearman:      {sim_metrics['spearman_mean']:.4f}")
+    print(f"  Within-3:      {sim_metrics['within_3']:.1f}%")
+print(f"\\nArtifacts saved to:")
+print(f"  Predictions: {TRAINING_DIR}")
+print(f"  Models: {MODEL_DIR}")"""),
+    ]
+    return cells
+
+
+# ---------------------------------------------------------------------------
+# Model H notebook: Delta + Monte Carlo
+# ---------------------------------------------------------------------------
+
+def make_model_h() -> list[dict]:
+    cells = [
+        md("# 05h — Model H Training: Delta + Monte Carlo Simulation\n\n"
+           "Predicts **delta_ratio** (lap_time_ratio - field_median_ratio) to cancel\n"
+           "systematic bias. Monte Carlo (N=200) averages out random errors.\n\n"
+           "Same 25 features as Model F, different target + MC inference.\n\n"
+           "CV: ExpandingWindowSplit (2019→2020 ... 2019-23→2024 test)."),
+        md("## 0. Setup"),
+        code(CHDIR),
+        code(IMPORTS),
+        code(SAVE_ARTIFACTS),
+        md("## 1. Build Training Data (Delta Target)"),
+        code("""\
+from f1_predictor.features.simulation_features import (
+    build_simulation_training_data,
+    SIMULATION_FEATURE_COLS,
+)
+from f1_predictor.features.delta_features import (
+    build_field_median_curves,
+    build_delta_training_data,
+)
+
+laps = load_from_gcs_or_local(
+    "data/raw/laps/all_laps.parquet",
+    Path("data/raw/laps/all_laps.parquet"),
+)
+races = load_from_gcs_or_local(
+    "data/raw/race/all_races.parquet",
+    Path("data/raw/race/all_races.parquet"),
+)
+
+# Build base simulation features
+df_base = build_simulation_training_data(laps, races)
+print(f"Base shape: {df_base.shape}")
+
+# Build field median curves and delta target
+field_medians = build_field_median_curves(laps, races)
+print(f"Circuits with median curves: {len(field_medians)}")
+
+df = build_delta_training_data(df_base, field_medians, races)
+print(f"Delta shape: {df.shape}")
+print(f"delta_ratio stats:\\n{df['delta_ratio'].describe()}")"""),
+        code("""\
+FEATURE_COLS = SIMULATION_FEATURE_COLS
+TARGET = "delta_ratio"
+ID_COLS = ["season", "round", "event_name", "driver_abbrev", "team"]
+
+df = df.dropna(subset=[TARGET]).reset_index(drop=True)
+
+X = df[FEATURE_COLS]
+y = df[TARGET]
+groups = df["season"].values
+print(f"Features ({len(FEATURE_COLS)}): {FEATURE_COLS}")
+print(f"X shape: {X.shape}, y shape: {y.shape}")
+print(f"NaN counts:\\n{X.isna().sum()}")"""),
+        md("## 2. CV Splitter"),
+        code("""\
+splitter = ExpandingWindowSplit(
+    fold_definitions=[
+        ([2019], 2020),
+        ([2019, 2020], 2021),
+        ([2019, 2020, 2021], 2022),
+        ([2019, 2020, 2021, 2022], 2023),
+    ],
+    test_season=2024,
+)
+print(f"CV folds: {splitter.get_n_splits()}")
+for i, (tr, va) in enumerate(splitter.split(groups)):
+    tr_seasons = sorted(set(groups[tr]))
+    va_seasons = sorted(set(groups[va]))
+    print(f"  Fold {i}: train seasons={tr_seasons}, val seasons={va_seasons}, "
+          f"train={len(tr):,}, val={len(va):,}")"""),
+        md("## 3. Model Candidates and Helpers\n\n"
+           "9 GPU candidates: 6 tree-based + 3 DL, all on delta target.\n"
+           "DL models are Optuna-tunable (no skip)."),
+        code("""\
+NAN_TOLERANT = {
+    "XGBoost_Delta", "XGBoost_DART_Delta", "XGBoost_Deep_Delta",
+    "LightGBM_Delta", "LightGBM_GOSS_Delta", "LightGBM_Shallow_Delta",
+}
+
+DL_SKIP_OPTUNA = set()  # all models tunable
+
+def get_candidates_h():
+    xgb_device = get_xgboost_device(GPU_BACKEND)
+    lgb_device = get_lightgbm_device(GPU_BACKEND)
+    candidates = {
+        "XGBoost_Delta": xgb.XGBRegressor(
+            n_estimators=300, n_jobs=-1, random_state=42, verbosity=0, **xgb_device),
+        "XGBoost_DART_Delta": xgb.XGBRegressor(
+            n_estimators=300, booster="dart", n_jobs=-1,
+            random_state=42, verbosity=0, **xgb_device),
+        "XGBoost_Deep_Delta": xgb.XGBRegressor(
+            n_estimators=300, max_depth=10, learning_rate=0.1,
+            n_jobs=-1, random_state=42, verbosity=0, **xgb_device),
+        "LightGBM_Delta": lgb.LGBMRegressor(
+            n_estimators=300, n_jobs=-1, random_state=42, verbose=-1, **lgb_device),
+        "LightGBM_GOSS_Delta": lgb.LGBMRegressor(
+            n_estimators=300, boosting_type="goss", n_jobs=-1,
+            random_state=42, verbose=-1, **lgb_device),
+        "LightGBM_Shallow_Delta": lgb.LGBMRegressor(
+            n_estimators=300, max_depth=4, learning_rate=0.05,
+            n_jobs=-1, random_state=42, verbose=-1, **lgb_device),
+    }
+    if DL_AVAILABLE:
+        n_feat = len(FEATURE_COLS)
+        candidates["GRU_Delta"] = GRU2Layer(input_dim=n_feat)
+        candidates["FTTransformer_Delta"] = FTTransformerWrapper(n_features=n_feat)
+        candidates["MLP_Delta"] = MLP3Layer(input_dim=n_feat, hidden1=128, hidden2=64)
+    print(f"Candidates ({len(candidates)}): {list(candidates.keys())}")
+    return candidates
+
+MODEL_CLASSES_H = {
+    "XGBoost_Delta": xgb.XGBRegressor,
+    "XGBoost_DART_Delta": xgb.XGBRegressor,
+    "XGBoost_Deep_Delta": xgb.XGBRegressor,
+    "LightGBM_Delta": lgb.LGBMRegressor,
+    "LightGBM_GOSS_Delta": lgb.LGBMRegressor,
+    "LightGBM_Shallow_Delta": lgb.LGBMRegressor,
+}
+if DL_AVAILABLE:
+    MODEL_CLASSES_H.update({
+        "GRU_Delta": GRU2Layer,
+        "FTTransformer_Delta": FTTransformerWrapper,
+        "MLP_Delta": MLP3Layer,
+    })
+
+def _xgb_base_space_h(trial):
+    return dict(
+        n_estimators=trial.suggest_int("n_estimators", 100, 1500),
+        max_depth=trial.suggest_int("max_depth", 3, 12),
+        learning_rate=trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+        subsample=trial.suggest_float("subsample", 0.6, 1.0),
+        colsample_bytree=trial.suggest_float("colsample_bytree", 0.5, 1.0),
+        reg_alpha=trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
+        reg_lambda=trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
+    )
+
+def _lgb_base_space_h(trial):
+    return dict(
+        n_estimators=trial.suggest_int("n_estimators", 100, 1500),
+        max_depth=trial.suggest_int("max_depth", 3, 12),
+        learning_rate=trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+        subsample=trial.suggest_float("subsample", 0.6, 1.0),
+        colsample_bytree=trial.suggest_float("colsample_bytree", 0.5, 1.0),
+        reg_alpha=trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
+        reg_lambda=trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
+    )
+
+def _dl_base_space_h(trial, model_cls):
+    params = dict(
+        input_dim=len(FEATURE_COLS),
+    )
+    if model_cls == MLP3Layer:
+        params["hidden1"] = trial.suggest_categorical("hidden1", [64, 128, 256])
+        params["hidden2"] = trial.suggest_categorical("hidden2", [32, 64, 128])
+        params["dropout"] = trial.suggest_float("dropout", 0.1, 0.5)
+        params["lr"] = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
+        params["weight_decay"] = trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True)
+    else:
+        params["hidden_dim"] = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256])
+        params["num_layers"] = trial.suggest_int("num_layers", 1, 3)
+        params["dropout"] = trial.suggest_float("dropout", 0.05, 0.5)
+        params["lr"] = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
+        params["weight_decay"] = trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True)
+    if model_cls == FTTransformerWrapper:
+        params["n_features"] = len(FEATURE_COLS)
+        params.pop("input_dim", None)
+    return params
+
+def get_optuna_param_space_h(name, trial):
+    xgb_device = get_xgboost_device(GPU_BACKEND)
+    lgb_device = get_lightgbm_device(GPU_BACKEND)
+    if name.startswith("XGBoost"):
+        params = _xgb_base_space_h(trial)
+        if "DART" in name:
+            params["booster"] = "dart"
+            params["rate_drop"] = trial.suggest_float("rate_drop", 0.01, 0.5)
+        if "Deep" in name:
+            pass  # max_depth already in search space
+        params.update(n_jobs=-1, random_state=42, verbosity=0, **xgb_device)
+        return params
+    elif name.startswith("LightGBM"):
+        params = _lgb_base_space_h(trial)
+        if "GOSS" in name:
+            params.pop("subsample", None)
+            params["boosting_type"] = "goss"
+        if "Shallow" in name:
+            pass
+        params.update(n_jobs=-1, random_state=42, verbose=-1, **lgb_device)
+        return params
+    elif name in ("GRU_Delta", "FTTransformer_Delta", "MLP_Delta"):
+        return _dl_base_space_h(trial, MODEL_CLASSES_H[name])
+    return {}
+
+def reconstruct_params_h(name, best_params):
+    params = dict(best_params)
+    xgb_device = get_xgboost_device(GPU_BACKEND)
+    lgb_device = get_lightgbm_device(GPU_BACKEND)
+    if name.startswith("XGBoost"):
+        if "DART" in name:
+            params.setdefault("booster", "dart")
+        params.update(n_jobs=-1, random_state=42, verbosity=0, **xgb_device)
+    elif name.startswith("LightGBM"):
+        if "GOSS" in name:
+            params.pop("subsample", None)
+            params["boosting_type"] = "goss"
+        params.update(n_jobs=-1, random_state=42, verbose=-1, **lgb_device)
+    return params"""),
+        code("""\
+def cv_evaluate_h(model, X, y, splitter, groups):
+    from sklearn.metrics import mean_squared_error, mean_absolute_error
+    rmses, maes = [], []
+    for tr_idx, va_idx in splitter.split(groups):
+        import sklearn.base
+        m = sklearn.base.clone(model)
+        X_tr = X.iloc[tr_idx] if hasattr(X, "iloc") else X[tr_idx]
+        y_tr = y.iloc[tr_idx] if hasattr(y, "iloc") else y[tr_idx]
+        X_va = X.iloc[va_idx] if hasattr(X, "iloc") else X[va_idx]
+        y_va = y.iloc[va_idx] if hasattr(y, "iloc") else y[va_idx]
+        name_str = type(model).__name__
+        if name_str in str(NAN_TOLERANT) or any(n in str(type(model)) for n in ["XGB", "LGB"]):
+            m.fit(X_tr, y_tr)
+        else:
+            X_tr_clean = X_tr.fillna(0) if hasattr(X_tr, "fillna") else np.nan_to_num(X_tr)
+            X_va_clean = X_va.fillna(0) if hasattr(X_va, "fillna") else np.nan_to_num(X_va)
+            m.fit(X_tr_clean, y_tr)
+            X_va = X_va_clean
+        preds = m.predict(X_va)
+        rmses.append(np.sqrt(mean_squared_error(y_va, preds)))
+        maes.append(mean_absolute_error(y_va, preds))
+    return {"mean_rmse": np.mean(rmses), "std_rmse": np.std(rmses), "mean_mae": np.mean(maes)}
+
+def screen_models_h(candidates, X, y, splitter, groups):
+    rows = []
+    for name, model in candidates.items():
+        try:
+            result = cv_evaluate_h(model, X, y, splitter, groups)
+            rows.append({"model": name, **result})
+            print(f"  {name}: RMSE={result['mean_rmse']:.4f}")
+        except Exception as e:
+            print(f"  {name}: FAILED — {e}")
+    return pd.DataFrame(rows).sort_values("mean_rmse").reset_index(drop=True)
+
+def run_optuna_round_h(name, X, y, splitter, groups, n_trials):
+    def objective(trial):
+        params = get_optuna_param_space_h(name, trial)
+        model_cls = MODEL_CLASSES_H[name]
+        model = model_cls(**params)
+        result = cv_evaluate_h(model, X, y, splitter, groups)
+        return result["mean_rmse"]
+    study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(seed=42))
+    study.optimize(objective, n_trials=n_trials, catch=(Exception,), show_progress_bar=False)
+    return study.best_params, study.best_value"""),
+        md("## 4. Round 1 — Screen Models"),
+        code("""\
+candidates = get_candidates_h()
+r1_results = screen_models_h(candidates, X, y, splitter, groups)
+r1_results[["model", "mean_rmse", "std_rmse", "mean_mae"]]"""),
+        code("""\
+fig, ax = plt.subplots(figsize=(10, 5))
+ax.barh(r1_results["model"], r1_results["mean_rmse"], xerr=r1_results["std_rmse"])
+ax.set_xlabel("Mean RMSE (CV)")
+ax.set_title("Round 1: Model Screening — Model H (Delta Ratio)")
+ax.invert_yaxis()
+plt.tight_layout()
+plt.show()"""),
+        code("""\
+top7_names = r1_results["model"].head(7).tolist()
+print(f"Advancing to Round 2: {top7_names}")
+eliminated = r1_results["model"].iloc[7:].tolist()
+print(f"Eliminated: {eliminated}")"""),
+        md("## 5. Round 2 — Optuna (top 7, 10 trials each)"),
+        code("""\
+r2_results = []
+for name in top7_names:
+    print(f"Tuning {name}...")
+    best_params, best_rmse = run_optuna_round_h(name, X, y, splitter, groups, n_trials=10)
+    r2_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
+    print(f"  Best RMSE: {best_rmse:.4f}")
+
+r2_df = pd.DataFrame(r2_results).sort_values("best_rmse").reset_index(drop=True)
+r2_df[["model", "best_rmse"]]"""),
+        code("""\
+top5_names = r2_df["model"].head(5).tolist()
+r2_best_params = {row["model"]: row["best_params"] for _, row in r2_df.iterrows()}
+print(f"Advancing to Round 3: {top5_names}")"""),
+        md("## 6. Round 3 — Final Tuning (top 5, 15 trials each)"),
+        code("""\
+r3_results = []
+for name in top5_names:
+    print(f"Fine-tuning {name}...")
+    best_params, best_rmse = run_optuna_round_h(name, X, y, splitter, groups, n_trials=15)
+    r3_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
+    print(f"  Best RMSE: {best_rmse:.4f}")
+
+r3_df = pd.DataFrame(r3_results).sort_values("best_rmse").reset_index(drop=True)
+r3_best_params = {row["model"]: row["best_params"] for _, row in r3_df.iterrows()}
+r3_df[["model", "best_rmse"]]"""),
+        md("## 7. Test Set Evaluation (Per-Lap Delta)"),
+        code("""\
+train_idx, test_idx = splitter.get_test_split(groups)
+X_train_full, X_test = X.iloc[train_idx], X.iloc[test_idx]
+y_train_full, y_test = y.iloc[train_idx], y.iloc[test_idx]
+id_train, id_test = df[ID_COLS].iloc[train_idx], df[ID_COLS].iloc[test_idx]
+
+print(f"Train: {X_train_full.shape}, Test: {X_test.shape}")
+print(f"Test season(s): {sorted(df['season'].iloc[test_idx].unique())}")"""),
+        code("""\
+final_results = []
+for name in top5_names:
+    params = reconstruct_params_h(name, r3_best_params[name])
+    model_cls = MODEL_CLASSES_H[name]
+    model = model_cls(**params)
+    model.fit(X_train_full, y_train_full)
+
+    train_preds = model.predict(X_train_full)
+    train_rmse = np.sqrt(mean_squared_error(y_train_full, train_preds))
+
+    test_preds = model.predict(X_test)
+    test_rmse = np.sqrt(mean_squared_error(y_test, test_preds))
+
+    val_rmse = r3_df.loc[r3_df["model"] == name, "best_rmse"].values[0]
+
+    final_results.append({
+        "model": name,
+        "train_rmse": train_rmse, "val_rmse": val_rmse,
+        "test_rmse": test_rmse, "overfit_gap": test_rmse - val_rmse,
+    })
+
+    print(f"{name}: train_rmse={train_rmse:.4f}, val_rmse={val_rmse:.4f}, "
+          f"test_rmse={test_rmse:.4f}, gap={test_rmse - val_rmse:.4f}")
+
+final_df = pd.DataFrame(final_results).sort_values("test_rmse").reset_index(drop=True)
+final_df"""),
+        md("## 8. Fit Residual Distribution for Monte Carlo"),
+        code("""\
+# Compute OOF residuals to calibrate MC noise
+best_model_name = final_df.iloc[0]["model"]
+best_params = reconstruct_params_h(best_model_name, r3_best_params[best_model_name])
+best_model = MODEL_CLASSES_H[best_model_name](**best_params)
+
+oof_residuals = np.full(len(X), np.nan)
+for tr_idx, va_idx in splitter.split(groups):
+    import sklearn.base
+    fold_model = sklearn.base.clone(best_model)
+    fold_model.fit(X.iloc[tr_idx], y.iloc[tr_idx])
+    preds = fold_model.predict(X.iloc[va_idx])
+    oof_residuals[va_idx] = y.iloc[va_idx].values - preds
+
+valid_mask = ~np.isnan(oof_residuals)
+residual_std = float(np.std(oof_residuals[valid_mask]))
+print(f"OOF residual std: {residual_std:.6f}")
+print(f"This will be used as noise_std for Monte Carlo simulation")"""),
+        md("## 9. Full Simulation — Delta + Monte Carlo (2024 Test Races)"),
+        code("""\
+from f1_predictor.simulation.delta_simulator import DeltaRaceSimulator, MonteCarloSimulator
+from f1_predictor.simulation.defaults import build_circuit_defaults
+from f1_predictor.simulation.evaluation import evaluate_simulation, evaluate_monte_carlo_calibration
+from f1_predictor.features.race_features import LOCATION_ALIASES
+
+circuit_defaults = build_circuit_defaults(laps)
+
+# Retrain best model on full training set
+best_model = MODEL_CLASSES_H[best_model_name](**best_params)
+best_model.fit(X_train_full, y_train_full)
+
+# Create delta simulator
+delta_sim = DeltaRaceSimulator(best_model, circuit_defaults, field_medians)
+mc_sim = MonteCarloSimulator(delta_sim, n_simulations=200, noise_std=residual_std, seed=42)
+
+print(f"Simulator ready: {best_model_name}")
+print(f"MC noise_std: {residual_std:.6f}, N=200 runs")"""),
+        code("""\
+test_races = races[races["season"] == 2024].copy()
+test_race_list = test_races.groupby(["season", "round", "event_name"]).first().reset_index()
+
+# Single-run delta simulation
+sim_results = []
+# MC simulation
+mc_results_all = []
+
+for _, race_row in test_race_list.iterrows():
+    event = race_row["event_name"]
+    event_norm = LOCATION_ALIASES.get(event, event)
+
+    if event_norm not in circuit_defaults:
+        print(f"  Skipping {event} (no circuit data)")
+        continue
+
+    race_drivers = test_races[
+        (test_races["season"] == race_row["season"])
+        & (test_races["round"] == race_row["round"])
+    ].copy()
+
+    drivers_input = []
+    actual_positions = {}
+    for _, drv in race_drivers.iterrows():
+        q1 = drv.get("q1_time_sec")
+        q2 = drv.get("q2_time_sec")
+        q3 = drv.get("q3_time_sec")
+        q_times = [t for t in [q1, q2, q3] if pd.notna(t)]
+        if not q_times or pd.isna(drv.get("grid_position")):
+            continue
+        drivers_input.append({
+            "driver": drv["driver_abbrev"],
+            "grid_position": int(drv["grid_position"]),
+            "q1": q1 if pd.notna(q1) else None,
+            "q2": q2 if pd.notna(q2) else None,
+            "q3": q3 if pd.notna(q3) else None,
+            "initial_tyre": "MEDIUM",
+        })
+        if pd.notna(drv.get("finish_position")):
+            actual_positions[drv["driver_abbrev"]] = int(drv["finish_position"])
+
+    if len(drivers_input) < 10:
+        continue
+
+    try:
+        # Single-run delta
+        result = delta_sim.simulate(event_norm, drivers_input)
+        for fr in result.final_results:
+            if fr["driver"] in actual_positions:
+                sim_results.append({
+                    "event": event, "driver": fr["driver"],
+                    "predicted_pos": fr["position"],
+                    "actual_pos": actual_positions[fr["driver"]],
+                })
+
+        # Monte Carlo
+        mc_result = mc_sim.simulate(event_norm, drivers_input)
+        for r in mc_result.results:
+            if r["driver"] in actual_positions:
+                mc_results_all.append({
+                    **r, "event": event,
+                    "actual_pos": actual_positions[r["driver"]],
+                    "predicted_pos": r["position"],
+                })
+        print(f"  {event}: simulated {len(drivers_input)} drivers")
+    except Exception as e:
+        print(f"  {event}: failed — {e}")
+
+sim_df = pd.DataFrame(sim_results)
+mc_df = pd.DataFrame(mc_results_all)
+print(f"\\nSingle-run results: {len(sim_df)} driver-race predictions")
+print(f"MC results: {len(mc_df)} driver-race predictions")"""),
+        code("""\
+from f1_predictor.simulation.evaluation import evaluate_simulation, evaluate_monte_carlo_calibration
+
+# Single-run delta metrics
+if len(sim_df) > 0:
+    delta_metrics = evaluate_simulation(sim_df)
+    print("=" * 60)
+    print("MODEL H — SINGLE-RUN DELTA SIMULATION (2024)")
+    print("=" * 60)
+    for k, v in delta_metrics.items():
+        print(f"  {k:20s}: {v}")
+
+# Monte Carlo metrics
+if len(mc_df) > 0:
+    mc_sim_metrics = evaluate_simulation(mc_df)
+    mc_cal_metrics = evaluate_monte_carlo_calibration(mc_df.to_dict("records"))
+    print()
+    print("=" * 60)
+    print("MODEL H — MONTE CARLO SIMULATION (N=200, 2024)")
+    print("=" * 60)
+    for k, v in mc_sim_metrics.items():
+        print(f"  {k:20s}: {v}")
+    print()
+    print("Monte Carlo Calibration:")
+    for k, v in mc_cal_metrics.items():
+        print(f"  {k:20s}: {v}")"""),
+        md("## 10. Save Artifacts"),
+        code("""\
+for name in top5_names:
+    params = reconstruct_params_h(name, r3_best_params[name])
+    model = MODEL_CLASSES_H[name](**params)
+    model.fit(X_train_full, y_train_full)
+
+    save_predictions(model, X_train_full, y_train_full, id_train, "H", name, "Training")
+    save_predictions(model, X_test, y_test, id_test, "H", name, "Test")
+
+    oof_preds = np.full(len(X), np.nan)
+    for tr_idx, va_idx in splitter.split(groups):
+        import sklearn.base
+        fold_model = sklearn.base.clone(model)
+        fold_model.fit(X.iloc[tr_idx], y.iloc[tr_idx])
+        oof_preds[va_idx] = fold_model.predict(X.iloc[va_idx])
+
+    val_mask = ~np.isnan(oof_preds)
+    val_out = df[ID_COLS].loc[val_mask].copy()
+    val_out["y_true"] = y.loc[val_mask].values
+    val_out["y_pred"] = oof_preds[val_mask]
+    fname = f"model_H_{name}_Validation.parquet"
+    uri = save_training_parquet(val_out, fname, TRAINING_DIR)
+    print(f"  Saved {fname} -> {uri}")
+
+    save_model_pkl(model, "H", name)
+
+print("\\nDone! All Model H artifacts saved.")"""),
+        md("## Summary"),
+        code("""\
+print("=" * 60)
+print("MODEL H (DELTA + MONTE CARLO) TRAINING COMPLETE")
+print("=" * 60)
+print(f"\\nPer-lap evaluation (top 5, sorted by test RMSE):")
+for _, row in final_df.iterrows():
+    print(f"  {row['model']:30s}  test_rmse={row['test_rmse']:.6f}  gap={row['overfit_gap']:.6f}")
+
+if len(sim_df) > 0:
+    print(f"\\nSingle-run delta simulation (2024):")
+    print(f"  Position RMSE: {delta_metrics['position_rmse']:.4f}")
+    print(f"  Spearman:      {delta_metrics['spearman_mean']:.4f}")
+    print(f"  Within-3:      {delta_metrics['within_3']:.1f}%")
+
+if len(mc_df) > 0:
+    print(f"\\nMonte Carlo simulation (N=200, 2024):")
+    print(f"  Position RMSE: {mc_sim_metrics['position_rmse']:.4f}")
+    print(f"  Spearman:      {mc_sim_metrics['spearman_mean']:.4f}")
+    print(f"  Within-3:      {mc_sim_metrics['within_3']:.1f}%")
+    print(f"  Coverage@80%:  {mc_cal_metrics['coverage_80']:.1f}%")
+
+print(f"\\nArtifacts saved to:")
+print(f"  Predictions: {TRAINING_DIR}")
+print(f"  Models: {MODEL_DIR}")"""),
+    ]
+    return cells
+
+
+# ---------------------------------------------------------------------------
+# Model I notebook: Uncertainty / Quantile Models
+# ---------------------------------------------------------------------------
+
+def make_model_i() -> list[dict]:
+    cells = [
+        md("# 05i — Model I Training: Uncertainty-Aware / Quantile Models\n\n"
+           "Predicts the **distribution** of `lap_time_ratio` via quantile regression,\n"
+           "mixture density networks, or deep ensembles.\n\n"
+           "8 GPU candidates: 2 tree-quantile + 3 DL-quantile + 2 MDN + 1 ensemble.\n"
+           "Quantile Monte Carlo: sample from predicted distribution for principled MC.\n\n"
+           "CV: ExpandingWindowSplit (2019→2020, ..., 2019-23→2024 test)."),
+        md("## 0. Setup"),
+        code(CHDIR),
+        code(IMPORTS),
+        code(SAVE_ARTIFACTS),
+        md("## 1. Build Training Data"),
+        code("""\
+from f1_predictor.features.simulation_features import (
+    build_simulation_training_data,
+    SIMULATION_FEATURE_COLS,
+)
+
+laps = load_from_gcs_or_local(
+    "data/raw/laps/all_laps.parquet",
+    Path("data/raw/laps/all_laps.parquet"),
+)
+races = load_from_gcs_or_local(
+    "data/raw/race/all_races.parquet",
+    Path("data/raw/race/all_races.parquet"),
+)
+
+df = build_simulation_training_data(laps, races)
+print(f"Shape: {df.shape}")
+print(f"Target stats:\\n{df['lap_time_ratio'].describe()}")"""),
+        code("""\
+FEATURE_COLS = SIMULATION_FEATURE_COLS
+TARGET = "lap_time_ratio"
+ID_COLS = ["season", "round", "event_name", "driver_abbrev", "team"]
+
+df = df.dropna(subset=[TARGET]).reset_index(drop=True)
+
+X = df[FEATURE_COLS]
+y = df[TARGET]
+groups = df["season"].values
+print(f"Features ({len(FEATURE_COLS)}): {FEATURE_COLS}")
+print(f"X shape: {X.shape}, y shape: {y.shape}")"""),
+        md("## 2. CV Splitter"),
+        code("""\
+splitter = ExpandingWindowSplit(
+    fold_definitions=[
+        ([2019], 2020),
+        ([2019, 2020], 2021),
+        ([2019, 2020, 2021], 2022),
+        ([2019, 2020, 2021, 2022], 2023),
+    ],
+    test_season=2024,
+)
+print(f"CV folds: {splitter.get_n_splits()}")
+for i, (tr, va) in enumerate(splitter.split(groups)):
+    tr_seasons = sorted(set(groups[tr]))
+    va_seasons = sorted(set(groups[va]))
+    print(f"  Fold {i}: train={tr_seasons}, val={va_seasons}, "
+          f"train={len(tr):,}, val={len(va):,}")"""),
+        md("## 3. Model Candidates and Helpers\n\n"
+           "8 uncertainty-aware candidates, all Optuna-tunable."),
+        code("""\
+from f1_predictor.models.quantile_architectures import (
+    LightGBM_Quantile, XGBoost_Quantile,
+    MLP_MultiQuantile, GRU_MultiQuantile, FTTransformer_Quantile,
+    MDN_MLP, MDN_GRU, DeepEnsemble,
+)
+
+DL_SKIP_OPTUNA = set()  # all models tunable
+NAN_TOLERANT = {"LightGBM_Quantile", "XGBoost_Quantile"}
+
+MODEL_CLASSES_I = {
+    "LightGBM_Quantile": LightGBM_Quantile,
+    "XGBoost_Quantile": XGBoost_Quantile,
+}
+if DL_AVAILABLE:
+    MODEL_CLASSES_I.update({
+        "MLP_MultiQuantile": MLP_MultiQuantile,
+        "GRU_MultiQuantile": GRU_MultiQuantile,
+        "FTTransformer_Quantile": FTTransformer_Quantile,
+        "MDN_MLP": MDN_MLP,
+        "MDN_GRU": MDN_GRU,
+        "DeepEnsemble": DeepEnsemble,
+    })
+
+
+def get_candidates_i():
+    xgb_device = get_xgboost_device(GPU_BACKEND)
+    lgb_device = get_lightgbm_device(GPU_BACKEND)
+    candidates = {
+        "LightGBM_Quantile": LightGBM_Quantile(
+            n_estimators=300, n_jobs=-1, random_state=42, verbose=-1, **lgb_device),
+        "XGBoost_Quantile": XGBoost_Quantile(
+            n_estimators=300, n_jobs=-1, random_state=42, verbosity=0, **xgb_device),
+    }
+    if DL_AVAILABLE:
+        n_feat = len(FEATURE_COLS)
+        candidates["MLP_MultiQuantile"] = MLP_MultiQuantile(input_dim=n_feat)
+        candidates["GRU_MultiQuantile"] = GRU_MultiQuantile(input_dim=n_feat)
+        candidates["FTTransformer_Quantile"] = FTTransformer_Quantile(input_dim=n_feat)
+        candidates["MDN_MLP"] = MDN_MLP(input_dim=n_feat)
+        candidates["MDN_GRU"] = MDN_GRU(input_dim=n_feat)
+        candidates["DeepEnsemble"] = DeepEnsemble(input_dim=n_feat)
+    print(f"Candidates ({len(candidates)}): {list(candidates.keys())}")
+    return candidates
+
+
+def _tree_quantile_space(trial, tree_type):
+    params = dict(
+        n_estimators=trial.suggest_int("n_estimators", 100, 1500),
+        max_depth=trial.suggest_int("max_depth", 3, 12),
+        learning_rate=trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+        subsample=trial.suggest_float("subsample", 0.6, 1.0),
+        colsample_bytree=trial.suggest_float("colsample_bytree", 0.5, 1.0),
+        reg_alpha=trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
+        reg_lambda=trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
+    )
+    if tree_type == "xgb":
+        xgb_device = get_xgboost_device(GPU_BACKEND)
+        params.update(n_jobs=-1, random_state=42, verbosity=0, **xgb_device)
+    else:
+        lgb_device = get_lightgbm_device(GPU_BACKEND)
+        params.update(n_jobs=-1, random_state=42, verbose=-1, **lgb_device)
+    return params
+
+
+def _dl_quantile_space(trial, model_cls):
+    params = {"input_dim": len(FEATURE_COLS)}
+    if model_cls in (MLP_MultiQuantile, MDN_MLP, DeepEnsemble):
+        params["hidden1"] = trial.suggest_categorical("hidden1", [64, 128, 256])
+        params["hidden2"] = trial.suggest_categorical("hidden2", [32, 64, 128])
+    if model_cls in (GRU_MultiQuantile, MDN_GRU):
+        params["hidden_dim"] = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256])
+        params["num_layers"] = trial.suggest_int("num_layers", 1, 3)
+    if model_cls == FTTransformer_Quantile:
+        params["d_token"] = trial.suggest_categorical("d_token", [32, 64, 128])
+        params["n_blocks"] = trial.suggest_int("n_blocks", 1, 4)
+    params["dropout"] = trial.suggest_float("dropout", 0.05, 0.5)
+    params["lr"] = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
+    params["weight_decay"] = trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True)
+    if model_cls in (MDN_MLP, MDN_GRU):
+        params["n_components"] = trial.suggest_int("n_components", 2, 5)
+    if model_cls == DeepEnsemble:
+        params["n_members"] = trial.suggest_int("n_members", 3, 7)
+    return params
+
+
+def get_optuna_param_space_i(name, trial):
+    if name == "LightGBM_Quantile":
+        return _tree_quantile_space(trial, "lgb")
+    elif name == "XGBoost_Quantile":
+        return _tree_quantile_space(trial, "xgb")
+    else:
+        return _dl_quantile_space(trial, MODEL_CLASSES_I[name])
+
+
+def reconstruct_params_i(name, best_params):
+    params = dict(best_params)
+    if name == "XGBoost_Quantile":
+        xgb_device = get_xgboost_device(GPU_BACKEND)
+        params.update(n_jobs=-1, random_state=42, verbosity=0, **xgb_device)
+    elif name == "LightGBM_Quantile":
+        lgb_device = get_lightgbm_device(GPU_BACKEND)
+        params.update(n_jobs=-1, random_state=42, verbose=-1, **lgb_device)
+    else:
+        params.setdefault("input_dim", len(FEATURE_COLS))
+    return params"""),
+        code("""\
+def cv_evaluate_i(model, X, y, splitter, groups):
+    from sklearn.metrics import mean_squared_error, mean_absolute_error
+    rmses, maes = [], []
+    for tr_idx, va_idx in splitter.split(groups):
+        import sklearn.base
+        m = sklearn.base.clone(model)
+        X_tr = X.iloc[tr_idx] if hasattr(X, "iloc") else X[tr_idx]
+        y_tr = y.iloc[tr_idx] if hasattr(y, "iloc") else y[tr_idx]
+        X_va = X.iloc[va_idx] if hasattr(X, "iloc") else X[va_idx]
+        y_va = y.iloc[va_idx] if hasattr(y, "iloc") else y[va_idx]
+        name_str = type(model).__name__
+        if name_str in str(NAN_TOLERANT) or any(n in str(type(model)) for n in ["XGB", "LGB"]):
+            m.fit(X_tr, y_tr)
+        else:
+            X_tr_clean = X_tr.fillna(0) if hasattr(X_tr, "fillna") else np.nan_to_num(X_tr)
+            X_va_clean = X_va.fillna(0) if hasattr(X_va, "fillna") else np.nan_to_num(X_va)
+            m.fit(X_tr_clean, y_tr)
+            X_va = X_va_clean
+        # Use median prediction (q50) for RMSE
+        preds = m.predict(X_va)
+        rmses.append(np.sqrt(mean_squared_error(y_va, preds)))
+        maes.append(mean_absolute_error(y_va, preds))
+    return {"mean_rmse": np.mean(rmses), "std_rmse": np.std(rmses), "mean_mae": np.mean(maes)}
+
+
+def screen_models_i(candidates, X, y, splitter, groups):
+    rows = []
+    for name, model in candidates.items():
+        try:
+            result = cv_evaluate_i(model, X, y, splitter, groups)
+            rows.append({"model": name, **result})
+            print(f"  {name}: RMSE={result['mean_rmse']:.4f}")
+        except Exception as e:
+            print(f"  {name}: FAILED — {e}")
+    return pd.DataFrame(rows).sort_values("mean_rmse").reset_index(drop=True)
+
+
+def run_optuna_round_i(name, X, y, splitter, groups, n_trials):
+    def objective(trial):
+        params = get_optuna_param_space_i(name, trial)
+        model_cls = MODEL_CLASSES_I[name]
+        model = model_cls(**params)
+        result = cv_evaluate_i(model, X, y, splitter, groups)
+        return result["mean_rmse"]
+    study = optuna.create_study(
+        direction="minimize",
+        sampler=optuna.samplers.TPESampler(seed=42),
+    )
+    study.optimize(
+        objective, n_trials=n_trials,
+        catch=(Exception,), show_progress_bar=False,
+    )
+    return study.best_params, study.best_value"""),
+        md("## 4. Round 1 — Screen Models"),
+        code("""\
+candidates = get_candidates_i()
+r1_results = screen_models_i(candidates, X, y, splitter, groups)
+r1_results[["model", "mean_rmse", "std_rmse", "mean_mae"]]"""),
+        code("""\
+fig, ax = plt.subplots(figsize=(10, 5))
+ax.barh(r1_results["model"], r1_results["mean_rmse"], xerr=r1_results["std_rmse"])
+ax.set_xlabel("Mean RMSE (CV)")
+ax.set_title("Round 1: Model Screening — Model I (Quantile/Uncertainty)")
+ax.invert_yaxis()
+plt.tight_layout()
+plt.show()"""),
+        code("""\
+top7_names = r1_results["model"].head(min(7, len(r1_results))).tolist()
+print(f"Advancing to Round 2: {top7_names}")
+eliminated = r1_results["model"].iloc[7:].tolist()
+if eliminated:
+    print(f"Eliminated: {eliminated}")"""),
+        md("## 5. Round 2 — Optuna (top 7, 10 trials each)"),
+        code("""\
+r2_results = []
+for name in top7_names:
+    print(f"Tuning {name}...")
+    best_params, best_rmse = run_optuna_round_i(
+        name, X, y, splitter, groups, n_trials=10)
+    r2_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
+    print(f"  Best RMSE: {best_rmse:.4f}")
+
+r2_df = pd.DataFrame(r2_results).sort_values("best_rmse").reset_index(drop=True)
+r2_df[["model", "best_rmse"]]"""),
+        code("""\
+top5_names = r2_df["model"].head(5).tolist()
+r2_best_params = {row["model"]: row["best_params"] for _, row in r2_df.iterrows()}
+print(f"Advancing to Round 3: {top5_names}")"""),
+        md("## 6. Round 3 — Final Tuning (top 5, 15 trials each)"),
+        code("""\
+r3_results = []
+for name in top5_names:
+    print(f"Fine-tuning {name}...")
+    best_params, best_rmse = run_optuna_round_i(
+        name, X, y, splitter, groups, n_trials=15)
+    r3_results.append({"model": name, "best_rmse": best_rmse, "best_params": best_params})
+    print(f"  Best RMSE: {best_rmse:.4f}")
+
+r3_df = pd.DataFrame(r3_results).sort_values("best_rmse").reset_index(drop=True)
+r3_best_params = {row["model"]: row["best_params"] for _, row in r3_df.iterrows()}
+r3_df[["model", "best_rmse"]]"""),
+        md("## 7. Test Set Evaluation (Per-Lap)"),
+        code("""\
+train_idx, test_idx = splitter.get_test_split(groups)
+X_train_full, X_test = X.iloc[train_idx], X.iloc[test_idx]
+y_train_full, y_test = y.iloc[train_idx], y.iloc[test_idx]
+id_train, id_test = df[ID_COLS].iloc[train_idx], df[ID_COLS].iloc[test_idx]
+
+print(f"Train: {X_train_full.shape}, Test: {X_test.shape}")
+print(f"Test season(s): {sorted(df['season'].iloc[test_idx].unique())}")"""),
+        code("""\
+final_results = []
+for name in top5_names:
+    params = reconstruct_params_i(name, r3_best_params[name])
+    model_cls = MODEL_CLASSES_I[name]
+    model = model_cls(**params)
+    model.fit(X_train_full, y_train_full)
+
+    train_preds = model.predict(X_train_full)
+    train_rmse = np.sqrt(mean_squared_error(y_train_full, train_preds))
+
+    test_preds = model.predict(X_test)
+    test_rmse = np.sqrt(mean_squared_error(y_test, test_preds))
+
+    val_rmse = r3_df.loc[r3_df["model"] == name, "best_rmse"].values[0]
+
+    final_results.append({
+        "model": name,
+        "train_rmse": train_rmse, "val_rmse": val_rmse,
+        "test_rmse": test_rmse, "overfit_gap": test_rmse - val_rmse,
+    })
+    print(f"{name}: train_rmse={train_rmse:.4f}, val_rmse={val_rmse:.4f}, "
+          f"test_rmse={test_rmse:.4f}")
+
+final_df = pd.DataFrame(final_results).sort_values("test_rmse").reset_index(drop=True)
+final_df"""),
+        md("## 8. Quantile Monte Carlo Simulation (2024 Test Races)"),
+        code("""\
+from f1_predictor.simulation.quantile_simulator import QuantileRaceSimulator
+from f1_predictor.simulation.defaults import build_circuit_defaults
+from f1_predictor.simulation.evaluation import evaluate_simulation, evaluate_monte_carlo_calibration
+from f1_predictor.features.race_features import LOCATION_ALIASES
+
+circuit_defaults = build_circuit_defaults(laps)
+
+# Retrain best quantile model on full training set
+best_model_name = final_df.iloc[0]["model"]
+best_params = reconstruct_params_i(best_model_name, r3_best_params[best_model_name])
+best_model = MODEL_CLASSES_I[best_model_name](**best_params)
+best_model.fit(X_train_full, y_train_full)
+
+qmc_sim = QuantileRaceSimulator(
+    best_model, circuit_defaults, n_simulations=200, seed=42)
+print(f"Quantile MC simulator: {best_model_name}, N=200 runs")"""),
+        code("""\
+test_races = races[races["season"] == 2024].copy()
+test_race_list = test_races.groupby(
+    ["season", "round", "event_name"]).first().reset_index()
+
+# Single-run (q50 only)
+from f1_predictor.simulation.engine import RaceSimulator
+single_sim = RaceSimulator(best_model, circuit_defaults)
+
+sim_results = []
+mc_results_all = []
+
+for _, race_row in test_race_list.iterrows():
+    event = race_row["event_name"]
+    event_norm = LOCATION_ALIASES.get(event, event)
+
+    if event_norm not in circuit_defaults:
+        print(f"  Skipping {event} (no circuit data)")
+        continue
+
+    race_drivers = test_races[
+        (test_races["season"] == race_row["season"])
+        & (test_races["round"] == race_row["round"])
+    ].copy()
+
+    drivers_input = []
+    actual_positions = {}
+    for _, drv in race_drivers.iterrows():
+        q1 = drv.get("q1_time_sec")
+        q2 = drv.get("q2_time_sec")
+        q3 = drv.get("q3_time_sec")
+        q_times = [t for t in [q1, q2, q3] if pd.notna(t)]
+        if not q_times or pd.isna(drv.get("grid_position")):
+            continue
+        drivers_input.append({
+            "driver": drv["driver_abbrev"],
+            "grid_position": int(drv["grid_position"]),
+            "q1": q1 if pd.notna(q1) else None,
+            "q2": q2 if pd.notna(q2) else None,
+            "q3": q3 if pd.notna(q3) else None,
+            "initial_tyre": "MEDIUM",
+        })
+        if pd.notna(drv.get("finish_position")):
+            actual_positions[drv["driver_abbrev"]] = int(drv["finish_position"])
+
+    if len(drivers_input) < 10:
+        continue
+
+    try:
+        # Single-run (median) simulation
+        result = single_sim.simulate(event_norm, drivers_input)
+        for fr in result.final_results:
+            if fr["driver"] in actual_positions:
+                sim_results.append({
+                    "event": event, "driver": fr["driver"],
+                    "predicted_pos": fr["position"],
+                    "actual_pos": actual_positions[fr["driver"]],
+                })
+
+        # Quantile Monte Carlo
+        mc_result = qmc_sim.simulate(event_norm, drivers_input)
+        for r in mc_result.results:
+            if r["driver"] in actual_positions:
+                mc_results_all.append({
+                    **r, "event": event,
+                    "actual_pos": actual_positions[r["driver"]],
+                    "predicted_pos": r["position"],
+                })
+        print(f"  {event}: simulated {len(drivers_input)} drivers")
+    except Exception as e:
+        print(f"  {event}: failed — {e}")
+
+sim_df = pd.DataFrame(sim_results)
+mc_df = pd.DataFrame(mc_results_all)
+print(f"\\nSingle-run results: {len(sim_df)} driver-race predictions")
+print(f"Quantile MC results: {len(mc_df)} driver-race predictions")"""),
+        code("""\
+# Single-run metrics
+if len(sim_df) > 0:
+    single_metrics = evaluate_simulation(sim_df)
+    print("=" * 60)
+    print("MODEL I — SINGLE-RUN (MEDIAN) SIMULATION (2024)")
+    print("=" * 60)
+    for k, v in single_metrics.items():
+        print(f"  {k:20s}: {v}")
+
+# Quantile MC metrics
+if len(mc_df) > 0:
+    mc_sim_metrics = evaluate_simulation(mc_df)
+    mc_cal_metrics = evaluate_monte_carlo_calibration(mc_df.to_dict("records"))
+    print()
+    print("=" * 60)
+    print("MODEL I — QUANTILE MC SIMULATION (N=200, 2024)")
+    print("=" * 60)
+    for k, v in mc_sim_metrics.items():
+        print(f"  {k:20s}: {v}")
+    print()
+    print("Calibration:")
+    for k, v in mc_cal_metrics.items():
+        print(f"  {k:20s}: {v}")"""),
+        md("## 9. Save Artifacts"),
+        code("""\
+for name in top5_names:
+    params = reconstruct_params_i(name, r3_best_params[name])
+    model = MODEL_CLASSES_I[name](**params)
+    model.fit(X_train_full, y_train_full)
+
+    save_predictions(model, X_train_full, y_train_full, id_train, "I", name, "Training")
+    save_predictions(model, X_test, y_test, id_test, "I", name, "Test")
+
+    oof_preds = np.full(len(X), np.nan)
+    for tr_idx, va_idx in splitter.split(groups):
+        import sklearn.base
+        fold_model = sklearn.base.clone(model)
+        fold_model.fit(X.iloc[tr_idx], y.iloc[tr_idx])
+        oof_preds[va_idx] = fold_model.predict(X.iloc[va_idx])
+
+    val_mask = ~np.isnan(oof_preds)
+    val_out = df[ID_COLS].loc[val_mask].copy()
+    val_out["y_true"] = y.loc[val_mask].values
+    val_out["y_pred"] = oof_preds[val_mask]
+    fname = f"model_I_{name}_Validation.parquet"
+    uri = save_training_parquet(val_out, fname, TRAINING_DIR)
+    print(f"  Saved {fname} -> {uri}")
+
+    save_model_pkl(model, "I", name)
+
+print("\\nDone! All Model I artifacts saved.")"""),
+        md("## Summary"),
+        code("""\
+print("=" * 60)
+print("MODEL I (UNCERTAINTY / QUANTILE) TRAINING COMPLETE")
+print("=" * 60)
+print(f"\\nPer-lap evaluation (top 5, sorted by test RMSE):")
+for _, row in final_df.iterrows():
+    print(f"  {row['model']:30s}  test_rmse={row['test_rmse']:.6f}  gap={row['overfit_gap']:.6f}")
+
+if len(sim_df) > 0:
+    print(f"\\nSingle-run (median) simulation (2024):")
+    print(f"  Position RMSE: {single_metrics['position_rmse']:.4f}")
+    print(f"  Spearman:      {single_metrics['spearman_mean']:.4f}")
+    print(f"  Within-3:      {single_metrics['within_3']:.1f}%")
+
+if len(mc_df) > 0:
+    print(f"\\nQuantile MC simulation (N=200, 2024):")
+    print(f"  Position RMSE: {mc_sim_metrics['position_rmse']:.4f}")
+    print(f"  Spearman:      {mc_sim_metrics['spearman_mean']:.4f}")
+    print(f"  Within-3:      {mc_sim_metrics['within_3']:.1f}%")
+    print(f"  Coverage@80%:  {mc_cal_metrics['coverage_80']:.1f}%")
+
+print(f"\\nArtifacts saved to:")
+print(f"  Predictions: {TRAINING_DIR}")
+print(f"  Models: {MODEL_DIR}")"""),
+    ]
+    return cells
+
+
+# ---------------------------------------------------------------------------
 # Notebook 06: Model Comparison
 # ---------------------------------------------------------------------------
 
@@ -2357,7 +3814,7 @@ TRAINING_DIR = Path("data/training")
 TRAINING_DIR.mkdir(parents=True, exist_ok=True)
 
 # Sync all model artifacts from GCS
-for mt in ["A", "B", "C", "D", "E", "F"]:
+for mt in ["A", "B", "C", "D", "E", "F", "G", "H", "I"]:
     sync_training_from_gcs(mt, TRAINING_DIR)
 print("Synced all training artifacts from GCS.")"""),
         md("## 1. Load All Prediction Parquets"),
@@ -2696,6 +4153,9 @@ def main():
         "05d_model_D_stacking.ipynb": make_model_d(),
         "05e_model_E_rich_stacking.ipynb": make_model_e(),
         "05f_model_F_lap_simulation.ipynb": make_model_f(),
+        "05g_model_G_temporal.ipynb": make_model_g(),
+        "05h_model_H_delta_mc.ipynb": make_model_h(),
+        "05i_model_I_quantile.ipynb": make_model_i(),
         "06_model_comparison.ipynb": make_model_comparison(),
     }
     for name, cells in notebooks.items():

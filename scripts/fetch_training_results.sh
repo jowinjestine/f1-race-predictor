@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # Download training results from GCS to local paths.
-# Run after the remote VM finishes all models (A, B, C, D, E, F) + comparison.
+# Run after the remote VM finishes all models (A-I) + comparison.
 #
 # Usage: bash scripts/fetch_training_results.sh
 # ---------------------------------------------------------------------------
@@ -17,29 +17,23 @@ echo ">>> Downloading all model artifacts from GCS..."
 mkdir -p data/training data/raw/model notebooks
 
 # Prediction parquets
-gcloud storage cp "gs://$BUCKET/data/training/model_A_*.parquet" data/training/
-gcloud storage cp "gs://$BUCKET/data/training/model_B_*.parquet" data/training/
-gcloud storage cp "gs://$BUCKET/data/training/model_C_*.parquet" data/training/
-gcloud storage cp "gs://$BUCKET/data/training/model_D_*.parquet" data/training/
-gcloud storage cp "gs://$BUCKET/data/training/model_E_*.parquet" data/training/
-gcloud storage cp "gs://$BUCKET/data/training/model_F_*.parquet" data/training/
+for m in A B C D E F G H I; do
+    gcloud storage cp "gs://$BUCKET/data/training/model_${m}_*.parquet" data/training/ 2>/dev/null || true
+done
 
 # Model pickles
-gcloud storage cp "gs://$BUCKET/data/raw/model/Model_A_*.pkl" data/raw/model/
-gcloud storage cp "gs://$BUCKET/data/raw/model/Model_B_*.pkl" data/raw/model/
-gcloud storage cp "gs://$BUCKET/data/raw/model/Model_C_*.pkl" data/raw/model/
-gcloud storage cp "gs://$BUCKET/data/raw/model/Model_D_*.pkl" data/raw/model/
-gcloud storage cp "gs://$BUCKET/data/raw/model/Model_E_*.pkl" data/raw/model/
-gcloud storage cp "gs://$BUCKET/data/raw/model/Model_F_*.pkl" data/raw/model/
+for m in A B C D E F G H I; do
+    gcloud storage cp "gs://$BUCKET/data/raw/model/Model_${m}_*.pkl" data/raw/model/ 2>/dev/null || true
+done
 
 # Executed notebooks
-gcloud storage cp "gs://$BUCKET/data/notebooks/05a_model_A_training.ipynb" notebooks/
-gcloud storage cp "gs://$BUCKET/data/notebooks/05b_model_B_training.ipynb" notebooks/
-gcloud storage cp "gs://$BUCKET/data/notebooks/05c_model_C_training.ipynb" notebooks/
-gcloud storage cp "gs://$BUCKET/data/notebooks/05d_model_D_stacking.ipynb" notebooks/
-gcloud storage cp "gs://$BUCKET/data/notebooks/05e_model_E_rich_stacking.ipynb" notebooks/
-gcloud storage cp "gs://$BUCKET/data/notebooks/05f_model_F_lap_simulation.ipynb" notebooks/
-gcloud storage cp "gs://$BUCKET/data/notebooks/06_model_comparison.ipynb" notebooks/
+for nb in \
+    05a_model_A_training 05b_model_B_training 05c_model_C_training \
+    05d_model_D_stacking 05e_model_E_rich_stacking 05f_model_F_lap_simulation \
+    05g_model_G_temporal 05h_model_H_delta_mc 05i_model_I_quantile \
+    06_model_comparison; do
+    gcloud storage cp "gs://$BUCKET/data/notebooks/${nb}.ipynb" notebooks/ 2>/dev/null || true
+done
 
 echo ""
 echo ">>> Downloaded artifacts:"

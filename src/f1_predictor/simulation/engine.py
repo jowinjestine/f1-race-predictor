@@ -64,17 +64,19 @@ class SimulationResult:
         """Convert lap records to a DataFrame."""
         rows = []
         for rec in self.lap_records:
-            rows.append({
-                "lap_number": rec.lap,
-                "driver": rec.driver,
-                "position": rec.position,
-                "lap_time": rec.lap_time,
-                "cum_time": rec.cum_time,
-                "gap_to_leader": rec.gap_to_leader,
-                "compound": rec.compound,
-                "tire_life": rec.tire_life,
-                "stint": rec.stint,
-            })
+            rows.append(
+                {
+                    "lap_number": rec.lap,
+                    "driver": rec.driver,
+                    "position": rec.position,
+                    "lap_time": rec.lap_time,
+                    "cum_time": rec.cum_time,
+                    "gap_to_leader": rec.gap_to_leader,
+                    "compound": rec.compound,
+                    "tire_life": rec.tire_life,
+                    "stint": rec.stint,
+                }
+            )
         return pd.DataFrame(rows)
 
 
@@ -116,8 +118,7 @@ class RaceSimulator:
         """
         if circuit not in self.circuit_defaults:
             raise ValueError(
-                f"Unknown circuit '{circuit}'. "
-                f"Available: {sorted(self.circuit_defaults.keys())}"
+                f"Unknown circuit '{circuit}'. Available: {sorted(self.circuit_defaults.keys())}"
             )
 
         cinfo = self.circuit_defaults[circuit]
@@ -133,7 +134,8 @@ class RaceSimulator:
         states: list[DriverState] = []
         for d in sorted(drivers, key=lambda x: x["grid_position"]):
             best_q = min(
-                v for v in [d.get("q1"), d.get("q2"), d.get("q3")]
+                v
+                for v in [d.get("q1"), d.get("q2"), d.get("q3")]
                 if v is not None and not np.isnan(v)
             )
             drv = DriverState(
@@ -168,9 +170,14 @@ class RaceSimulator:
 
             # Build feature matrix for all drivers
             features = self._build_features(
-                lap, total_laps, states,
-                is_street, is_hybrid, is_permanent,
-                pit_in_drivers, pit_out_drivers,
+                lap,
+                total_laps,
+                states,
+                is_street,
+                is_hybrid,
+                is_permanent,
+                pit_in_drivers,
+                pit_out_drivers,
             )
 
             # Predict lap time ratios
@@ -203,17 +210,19 @@ class RaceSimulator:
 
             # Record results
             for s in states:
-                all_records.append(LapRecord(
-                    lap=lap,
-                    driver=s.driver,
-                    position=s.position,
-                    lap_time=s.lap_times[-1],
-                    cum_time=s.cum_time,
-                    gap_to_leader=s.cum_time - leader_time,
-                    compound=s.compound,
-                    tire_life=s.tire_life - 1,
-                    stint=s.stint,
-                ))
+                all_records.append(
+                    LapRecord(
+                        lap=lap,
+                        driver=s.driver,
+                        position=s.position,
+                        lap_time=s.lap_times[-1],
+                        cum_time=s.cum_time,
+                        gap_to_leader=s.cum_time - leader_time,
+                        compound=s.compound,
+                        tire_life=s.tire_life - 1,
+                        stint=s.stint,
+                    )
+                )
 
             # Handle pit stops (execute after recording lap)
             for s in states:
@@ -232,13 +241,15 @@ class RaceSimulator:
         final_sorted = sorted(states, key=lambda x: x.cum_time)
         final_results = []
         for pos, s in enumerate(final_sorted, 1):
-            final_results.append({
-                "driver": s.driver,
-                "position": pos,
-                "total_time": s.cum_time,
-                "gap_to_leader": s.cum_time - final_sorted[0].cum_time,
-                "pit_stops": s.pit_stop_count,
-            })
+            final_results.append(
+                {
+                    "driver": s.driver,
+                    "position": pos,
+                    "total_time": s.cum_time,
+                    "gap_to_leader": s.cum_time - final_sorted[0].cum_time,
+                    "pit_stops": s.pit_stop_count,
+                }
+            )
 
         return SimulationResult(
             circuit=circuit,
