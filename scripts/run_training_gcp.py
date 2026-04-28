@@ -17,7 +17,6 @@ ZONE = "us-central1-a"
 BUCKET = "f1-predictor-artifacts-jowin"
 STAGING_PREFIX = "staging/training-run"
 RESULTS_PREFIX = "data"
-GPU_IMAGE_FAMILY = "common-cu129-ubuntu-2204-nvidia-580"
 GPU_IMAGE_PROJECT = "deeplearning-platform-release"
 CPU_IMAGE_FAMILY = "debian-12"
 CPU_IMAGE_PROJECT = "debian-cloud"
@@ -26,6 +25,7 @@ GPU_CONFIGS = {
     "l4": {
         "accelerator": "nvidia-l4",
         "machine_type": "g2-standard-8",
+        "image_family": "common-cu124-ubuntu-2204",
         "zones": [
             "us-central1-a",
             "us-central1-b",
@@ -41,6 +41,7 @@ GPU_CONFIGS = {
     "v100": {
         "accelerator": "nvidia-tesla-v100",
         "machine_type": "n1-standard-8",
+        "image_family": "common-cu124-ubuntu-2204",
         "zones": [
             "us-central1-a",
             "us-central1-b",
@@ -53,6 +54,7 @@ GPU_CONFIGS = {
     "a100": {
         "accelerator": "nvidia-tesla-a100",
         "machine_type": "a2-highgpu-1g",
+        "image_family": "common-cu124-ubuntu-2204",
         "zones": [
             "us-central1-a",
             "us-central1-b",
@@ -290,7 +292,7 @@ def create_vm(model_keys: list[str], *, cpu: bool = False, gpu: str = "l4") -> t
         image_family = CPU_IMAGE_FAMILY
         image_project = CPU_IMAGE_PROJECT
     else:
-        image_family = GPU_IMAGE_FAMILY
+        image_family = gpu_cfg["image_family"]
         image_project = GPU_IMAGE_PROJECT
 
     image = image_client.get_from_family(project=image_project, family=image_family)
