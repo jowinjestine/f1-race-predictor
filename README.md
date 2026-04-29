@@ -81,6 +81,18 @@ f1-race-predictor/
 └── pyproject.toml     # Project configuration
 ```
 
+## GPU Training (GCE VM)
+
+```bash
+# Launch training on GCE VM with T4 GPU (runs all models, self-deletes)
+bash scripts/run_training_remote.sh
+
+# Download results when done
+bash scripts/fetch_training_results.sh
+```
+
+See [docs/GPU_DL_PLAN.md](docs/GPU_DL_PLAN.md) for architecture details.
+
 ## Development
 
 ### Commits

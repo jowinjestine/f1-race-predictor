@@ -30,8 +30,10 @@ htmlcov/
 # Data files
 data/raw/*
 data/processed/*
+data/training/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+!data/training/.gitkeep
 !data/processed/*/
 data/processed/*/*.parquet
 !data/processed/*/.gitkeep
@@ -67,3 +69,13 @@ mlartifacts/
 
 # FastF1 cache
 .fastf1_cache/
+
+# Graphify temp files
+.graphify_*
+graphify-out/cache/
+
+# Claude Code local state
+.claude/
+
+# Local training logs
+logs/
