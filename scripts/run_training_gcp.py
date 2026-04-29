@@ -17,7 +17,6 @@ ZONE = "us-central1-a"
 BUCKET = "f1-predictor-artifacts-jowin"
 STAGING_PREFIX = "staging/training-run"
 RESULTS_PREFIX = "data"
-GPU_IMAGE_PROJECT = "deeplearning-platform-release"
 CPU_IMAGE_FAMILY = "debian-12"
 CPU_IMAGE_PROJECT = "debian-cloud"
 
@@ -25,7 +24,8 @@ GPU_CONFIGS = {
     "l4": {
         "accelerator": "nvidia-l4",
         "machine_type": "g2-standard-8",
-        "image_family": "common-cu124-ubuntu-2204",
+        "image_family": "common-cu129-ubuntu-2204-nvidia-580",
+        "image_project": "deeplearning-platform-release",
         "zones": [
             "us-central1-a",
             "us-central1-b",
@@ -41,7 +41,8 @@ GPU_CONFIGS = {
     "v100": {
         "accelerator": "nvidia-tesla-v100",
         "machine_type": "n1-standard-8",
-        "image_family": "common-cu124-ubuntu-2204",
+        "image_family": "ubuntu-2204-lts",
+        "image_project": "ubuntu-os-cloud",
         "zones": [
             "us-central1-a",
             "us-central1-b",
@@ -54,7 +55,8 @@ GPU_CONFIGS = {
     "a100": {
         "accelerator": "nvidia-tesla-a100",
         "machine_type": "a2-highgpu-1g",
-        "image_family": "common-cu124-ubuntu-2204",
+        "image_family": "common-cu129-ubuntu-2204-nvidia-580",
+        "image_project": "deeplearning-platform-release",
         "zones": [
             "us-central1-a",
             "us-central1-b",
@@ -197,6 +199,13 @@ uv sync --frozen --group dev
 uv pip install xgboost lightgbm optuna
 {extra_pip_line}
 
+if ! nvidia-smi > /dev/null 2>&1; then
+    echo ">>> nvidia-smi not found — installing NVIDIA driver..."
+    apt-get update -qq && apt-get install -y -qq python3-pip pciutils 2>/dev/null
+    curl -fsSL https://raw.githubusercontent.com/GoogleCloudPlatform/compute-gpu-installation/main/linux/install_gpu_driver.py -o /tmp/install_gpu_driver.py
+    python3 /tmp/install_gpu_driver.py 2>&1 || true
+fi
+
 echo ">>> Waiting for GPU driver (up to 5 min)..."
 GPU_READY=false
 for i in $(seq 1 60); do
@@ -295,7 +304,7 @@ def create_vm(model_keys: list[str], *, cpu: bool = False, gpu: str = "l4") -> t
         image_project = CPU_IMAGE_PROJECT
     else:
         image_family = gpu_cfg["image_family"]
-        image_project = GPU_IMAGE_PROJECT
+        image_project = gpu_cfg["image_project"]
 
     image = image_client.get_from_family(project=image_project, family=image_family)
     zones_to_try = [ZONE] if cpu else gpu_cfg["zones"]
