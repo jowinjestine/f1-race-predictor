@@ -44,7 +44,37 @@ def _to_strategies(req: SimulationRequest) -> dict[str, list[tuple[str, int | No
     }
 
 
-@router.post("/simulate", response_model=SimulationResponse)
+@router.post(
+    "/simulate",
+    response_model=SimulationResponse,
+    summary="Run a deterministic race simulation",
+    description="""Simulates a full race lap-by-lap using Model H (LightGBM delta-baseline).
+
+**How it works:**
+
+1. Each driver starts with their qualifying time as a pace baseline
+2. At every lap, the model predicts each driver's deviation from the historical
+   field median lap-time-ratio for that circuit
+3. Predictions are clamped (normal: 1.01-1.15x, pit-in: 1.10-1.50x, pit-out: 1.03-1.25x)
+   and converted to absolute lap times
+4. Positions are derived from cumulative race time after each lap
+5. Pit stops are executed according to the provided or default strategy
+
+**Pit strategies:** If no strategy is provided, circuit-default strategies are used
+(based on historical data). Custom strategies let you explore "what if" scenarios
+like an early undercut or a 1-stop vs 2-stop gamble.
+
+**Blend laps:** When `blend_laps > 0`, the last N laps interpolate H's trajectory
+positions toward Model E's final-position predictions. Set to 0 (recommended) for
+pure Model H simulation.
+
+Returns full lap-by-lap telemetry (position, lap time, gap, tyre state) plus
+final standings.""",
+    responses={
+        400: {"description": "Unknown circuit name — use GET /api/v1/circuits for valid names"},
+        503: {"description": "Models not loaded yet — the service is still starting up"},
+    },
+)
 def simulate(req: SimulationRequest) -> SimulationResponse:
     if not registry.ready or registry.h_simulator is None:
         raise HTTPException(503, "Models not loaded yet")
@@ -88,7 +118,30 @@ def simulate(req: SimulationRequest) -> SimulationResponse:
     )
 
 
-@router.post("/simulate/monte-carlo", response_model=MonteCarloResponse)
+@router.post(
+    "/simulate/monte-carlo",
+    response_model=MonteCarloResponse,
+    summary="Run Monte Carlo simulation for position distributions",
+    description="""Runs N independent simulations with Gaussian noise (std=0.01) injected into
+Model H's lap-time-ratio predictions. Each simulation produces slightly different
+trajectories, capturing the inherent uncertainty in race outcomes.
+
+**Use cases:**
+
+- Estimate how likely a driver is to finish on the podium
+- Compare strategy risk — a 1-stop may have a higher ceiling but wider position spread
+- Quantify the "safety" of a grid position (low std = predictable, high std = volatile)
+
+**Output:** For each driver, returns the median position, mean, 10th/25th/75th/90th
+percentiles, and standard deviation across all simulations.
+
+**Performance:** 50 simulations take ~5s, 200 simulations ~15s. The default (200) provides
+stable percentile estimates.""",
+    responses={
+        400: {"description": "Unknown circuit name"},
+        503: {"description": "Models not loaded yet"},
+    },
+)
 def simulate_monte_carlo(req: SimulationRequest) -> MonteCarloResponse:
     if not registry.ready or registry.h_simulator is None:
         raise HTTPException(503, "Models not loaded yet")
