@@ -12,7 +12,11 @@ RUN uv sync --frozen --no-dev --extra serve
 COPY src/ src/
 RUN uv pip install --no-deps -e .
 
+COPY data/raw/model/Model_H_LightGBM_GOSS_Delta.pkl data/raw/model/
+COPY data/raw/model/Model_E_LightGBM_shallow.pkl data/raw/model/
+COPY data/raw/laps/all_laps.parquet data/raw/laps/
+COPY data/raw/race/all_races.parquet data/raw/race/
+
 ENV PORT=8080
-ENV F1_LOAD_FROM_GCS=true
 
 CMD ["uv", "run", "uvicorn", "f1_predictor.api.main:app", "--host", "0.0.0.0", "--port", "8080"]
