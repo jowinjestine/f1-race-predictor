@@ -30,18 +30,22 @@ def build_circuit_defaults(laps: pd.DataFrame) -> dict[str, dict[str, Any]]:
         race_laps = grp.groupby(["season", "round"])["lap_number"].max()
         total_laps = int(race_laps.median())
 
-        # Pit stop count: mode of final pit_stop_count per driver per race
-        if "is_pit_out_lap" in grp.columns:
-            final_laps = (
-                grp.sort_values("lap_number").groupby(["season", "round", "driver_abbrev"]).tail(1)
+        # Pit stop count: median number of pit-in laps per driver per race
+        if "is_pit_in_lap" in grp.columns:
+            pit_counts = (
+                grp[grp["is_pit_in_lap"] == True]  # noqa: E712
+                .groupby(["season", "round", "driver_abbrev"])
+                .size()
             )
-            if "pit_stop_count" not in final_laps.columns:
-                pit_counts = final_laps.groupby(["season", "round", "driver_abbrev"])[
-                    "is_pit_out_lap"
-                ].sum()
+            all_drivers = grp.groupby(["season", "round", "driver_abbrev"]).ngroups
+            if len(pit_counts) > 0:
+                all_keys = grp.groupby(["season", "round", "driver_abbrev"]).size()
+                pit_counts = pit_counts.reindex(all_keys.index, fill_value=0)
+                typical_stops = int(pit_counts.median())
+            elif all_drivers > 0:
+                typical_stops = 1
             else:
-                pit_counts = final_laps["pit_stop_count"]
-            typical_stops = int(pit_counts.median()) if len(pit_counts) > 0 else 1
+                typical_stops = 1
         else:
             typical_stops = 1
 
@@ -85,6 +89,7 @@ def _get_common_compound_sequence(race_laps: pd.DataFrame, n_stops: int) -> list
         compounds = (
             drv_grp.sort_values("lap_number").groupby("stint")["tire_compound"].first().tolist()
         )
+        compounds = [c for c in compounds if c is not None]
         if len(compounds) >= 2:
             sequences.append(tuple(compounds))
 
