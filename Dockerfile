@@ -12,10 +12,7 @@ RUN uv sync --frozen --no-dev --extra serve
 COPY src/ src/
 RUN uv pip install --no-deps -e .
 
-COPY data/raw/model/Model_H_LightGBM_GOSS_Delta.pkl data/raw/model/
-COPY data/raw/model/Model_E_LightGBM_shallow.pkl data/raw/model/
-COPY data/raw/laps/all_laps.parquet data/raw/laps/
-COPY data/raw/race/all_races.parquet data/raw/race/
+# Models and data are downloaded from GCS at startup (F1_LOAD_FROM_GCS=true)
 
 ENV PORT=8080
 
