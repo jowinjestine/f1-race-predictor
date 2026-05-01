@@ -603,6 +603,7 @@ notebooks = [
 ]
 serve = [
     { name = "fastapi" },
+    { name = "lightgbm" },
     { name = "pydantic-settings" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -629,6 +630,7 @@ requires-dist = [
     { name = "gcsfs", specifier = ">=2024.2" },
     { name = "google-cloud-storage", specifier = ">=2.16" },
     { name = "jupyter", marker = "extra == 'notebooks'", specifier = ">=1.0" },
+    { name = "lightgbm", marker = "extra == 'serve'", specifier = ">=4.0" },
     { name = "lightgbm", marker = "extra == 'training'", specifier = ">=4.0" },
     { name = "matplotlib", marker = "extra == 'notebooks'", specifier = ">=3.8" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
