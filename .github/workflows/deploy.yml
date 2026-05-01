@@ -1,10 +1,62 @@
-name: Deploy
+name: Deploy to Cloud Run
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "Dockerfile"
+      - "pyproject.toml"
+      - "uv.lock"
   workflow_dispatch:
 
+env:
+  PROJECT_ID: jowin-personal-2026
+  REGION: us-central1
+  SERVICE: f1-race-predictor
+  IMAGE: gcr.io/jowin-personal-2026/f1-race-predictor
+
 jobs:
-  placeholder:
+  deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
     steps:
-      - run: echo "Deploy workflow will be implemented in JOW-16"
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - run: gcloud auth configure-docker
+
+      - name: Build and push
+        run: |
+          docker build -t ${{ env.IMAGE }}:${{ github.sha }} -t ${{ env.IMAGE }}:latest .
+          docker push ${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.IMAGE }}:latest
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE }}
+          region: ${{ env.REGION }}
+          image: ${{ env.IMAGE }}:${{ github.sha }}
+          flags: >-
+            --cpu=2
+            --memory=2Gi
+            --min-instances=1
+            --max-instances=5
+            --concurrency=10
+            --timeout=300
+            --cpu-boost
+
+      - name: Show URL
+        run: |
+          echo "Deployed to: $(gcloud run services describe ${{ env.SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')"

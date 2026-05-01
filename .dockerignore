@@ -1,0 +1,13 @@
+.venv
+.git
+__pycache__
+*.pyc
+notebooks
+scripts
+tests
+*.egg-info
+.ruff_cache
+.mypy_cache
+.pytest_cache
+graphify-out
+.github
