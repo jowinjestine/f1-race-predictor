@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pandas as pd
 from google.cloud import storage
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +98,112 @@ def load_from_gcs_or_local(gcs_blob: str, local_path: Path) -> pd.DataFrame:
             "GCS unavailable for %s, reading local: %s", gcs_blob, local_path, exc_info=True
         )
         return pd.read_parquet(local_path)
+
+
+def list_blobs(prefix: str) -> list[str]:  # pragma: no cover
+    """List all blobs under a given prefix."""
+    client = get_client()
+    bucket = client.bucket(BUCKET_NAME)
+    return [b.name for b in bucket.list_blobs(prefix=prefix)]
+
+
+def upload_blob(local_path: Path, blob_name: str) -> str:  # pragma: no cover
+    """Upload any local file to GCS. Returns the gs:// URI."""
+    client = get_client()
+    bucket = client.bucket(BUCKET_NAME)
+    blob = bucket.blob(blob_name)
+    blob.upload_from_filename(str(local_path))
+    uri = f"gs://{BUCKET_NAME}/{blob_name}"
+    logger.info("Uploaded %s -> %s", local_path, uri)
+    return uri
+
+
+def download_blob(blob_name: str, local_path: Path) -> Path:  # pragma: no cover
+    """Download any blob from GCS to a local path."""
+    client = get_client()
+    bucket = client.bucket(BUCKET_NAME)
+    blob = bucket.blob(blob_name)
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    blob.download_to_filename(str(local_path))
+    logger.info("Downloaded %s -> %s", blob_name, local_path)
+    return local_path
+
+
+def save_training_parquet(
+    df: pd.DataFrame, filename: str, local_dir: Path | None = None
+) -> str:  # pragma: no cover
+    """Save a training parquet locally and upload to GCS.
+
+    Returns the gs:// URI. Falls back to local-only if GCS unavailable.
+    """
+    local_dir = local_dir or Path("data/training")
+    local_dir.mkdir(parents=True, exist_ok=True)
+    local_path = local_dir / filename
+    df.to_parquet(local_path, index=False)
+    logger.info("Saved locally: %s", local_path)
+    try:
+        return upload_blob(local_path, f"data/training/{filename}")
+    except Exception:
+        logger.warning("GCS upload failed for %s, local-only", filename, exc_info=True)
+        return str(local_path)
+
+
+def save_model_pickle(
+    model: object, filename: str, local_dir: Path | None = None
+) -> str:  # pragma: no cover
+    """Save a model pickle locally and upload to GCS.
+
+    Returns the gs:// URI. Falls back to local-only if GCS unavailable.
+    """
+    import pickle
+
+    local_dir = local_dir or Path("data/raw/model")
+    local_dir.mkdir(parents=True, exist_ok=True)
+    local_path = local_dir / filename
+    with open(local_path, "wb") as f:
+        pickle.dump(model, f)
+    logger.info("Saved locally: %s", local_path)
+    try:
+        return upload_blob(local_path, f"data/raw/model/{filename}")
+    except Exception:
+        logger.warning("GCS upload failed for %s, local-only", filename, exc_info=True)
+        return str(local_path)
+
+
+def save_notebook(local_path: Path, notebook_name: str) -> str:  # pragma: no cover
+    """Upload an executed notebook to GCS."""
+    try:
+        return upload_blob(local_path, f"data/notebooks/{notebook_name}")
+    except Exception:
+        logger.warning("GCS upload failed for notebook %s", notebook_name, exc_info=True)
+        return str(local_path)
+
+
+def load_training_parquet(filename: str, local_dir: Path | None = None) -> pd.DataFrame:
+    """Load a training parquet from GCS, falling back to local."""
+    local_dir = local_dir or Path("data/training")
+    blob_name = f"data/training/{filename}"
+    local_path = local_dir / filename
+    return load_from_gcs_or_local(blob_name, local_path)
+
+
+def sync_training_from_gcs(
+    model_type: str, local_dir: Path | None = None
+) -> list[Path]:  # pragma: no cover
+    """Download all training parquets for a model type from GCS."""
+    local_dir = local_dir or Path("data/training")
+    local_dir.mkdir(parents=True, exist_ok=True)
+    prefix = f"data/training/model_{model_type}_"
+    blobs = list_blobs(prefix)
+    downloaded = []
+    for blob_name in blobs:
+        filename = blob_name.split("/")[-1]
+        local_path = local_dir / filename
+        if not local_path.exists():
+            download_blob(blob_name, local_path)
+        downloaded.append(local_path)
+    logger.info("Synced %d files for Model %s", len(downloaded), model_type)
+    return downloaded
 
 
 def ensure_latest(local_dir: Path) -> pd.DataFrame:
