@@ -102,7 +102,7 @@ module = ["sklearn.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["lightgbm", "lightgbm.*", "xgboost", "xgboost.*"]
+module = ["lightgbm", "xgboost"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
