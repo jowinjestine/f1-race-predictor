@@ -97,8 +97,8 @@ Models are loaded from `data/raw/model/` by default. Set `F1_LOAD_FROM_GCS=true`
 | GET | `/api/v1/circuits` | List available circuits with default strategies |
 | GET | `/api/v1/drivers/{season}` | List drivers for a season |
 | GET | `/api/v1/races/{season}` | List races for a season |
-| GET | `/healthz` | Liveness check |
-| GET | `/readyz` | Readiness check (models loaded) |
+| GET | `/api/health` | Liveness check |
+| GET | `/api/ready` | Readiness check (models loaded) |
 
 ### Example Request
 

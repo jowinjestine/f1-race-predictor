@@ -6,15 +6,15 @@ from fastapi import APIRouter
 
 from f1_predictor.api.dependencies import registry
 
-router = APIRouter(tags=["health"])
+router = APIRouter(prefix="/api", tags=["health"])
 
 
-@router.get("/healthz")
+@router.get("/health")
 def liveness() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@router.get("/readyz")
+@router.get("/ready")
 def readiness() -> dict[str, str | bool]:
     return {
         "status": "ready" if registry.ready else "loading",
