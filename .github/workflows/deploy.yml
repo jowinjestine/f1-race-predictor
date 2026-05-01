@@ -14,7 +14,7 @@ env:
   PROJECT_ID: jowin-personal-2026
   REGION: us-central1
   SERVICE: f1-race-predictor
-  IMAGE: gcr.io/jowin-personal-2026/f1-race-predictor
+  IMAGE: us-docker.pkg.dev/jowin-personal-2026/f1-race-predictor/f1-race-predictor
 
 jobs:
   deploy:
@@ -34,7 +34,7 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      - run: gcloud auth configure-docker
+      - run: gcloud auth configure-docker us-docker.pkg.dev
 
       - name: Build and push
         run: |

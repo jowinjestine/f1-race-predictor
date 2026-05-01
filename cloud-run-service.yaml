@@ -13,7 +13,7 @@ spec:
       containerConcurrency: 10
       timeoutSeconds: 300
       containers:
-        - image: gcr.io/jowin-personal-2026/f1-race-predictor:latest
+        - image: us-docker.pkg.dev/jowin-personal-2026/f1-race-predictor/f1-race-predictor:latest
           ports:
             - containerPort: 8080
           resources:
