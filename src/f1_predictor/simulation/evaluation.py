@@ -37,7 +37,7 @@ def evaluate_simulation(sim_df: pd.DataFrame) -> dict[str, float]:
 
     actual = sim_df["actual_pos"].values
     predicted = sim_df["predicted_pos"].values
-    abs_err = np.abs(actual - predicted)
+    abs_err = np.abs(actual - predicted)  # type: ignore[operator]
 
     spear_vals = []
     for _event, grp in sim_df.groupby("event"):
@@ -57,7 +57,7 @@ def evaluate_simulation(sim_df: pd.DataFrame) -> dict[str, float]:
     }
 
 
-def evaluate_monte_carlo_calibration(mc_results: list[dict]) -> dict[str, float]:
+def evaluate_monte_carlo_calibration(mc_results: list[dict[str, float]]) -> dict[str, float]:
     """Evaluate calibration of Monte Carlo / quantile predictions.
 
     Args:

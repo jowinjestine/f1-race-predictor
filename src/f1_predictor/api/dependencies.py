@@ -5,15 +5,18 @@ from __future__ import annotations
 import io
 import logging
 import pickle
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
-from f1_predictor.api.config import Settings
 from f1_predictor.simulation.defaults import build_circuit_defaults, build_field_median_curves
 from f1_predictor.simulation.delta_simulator import DeltaRaceSimulator
 from f1_predictor.simulation.ensemble_simulator import EnsembleSimulator
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from f1_predictor.api.config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +38,7 @@ def _load_pkl(path: Path) -> Any:
             return CPUUnpickler(f).load()
     except Exception:
         with open(path, "rb") as f:
-            return pickle.load(f)  # noqa: S301
+            return pickle.load(f)
 
 
 class ModelRegistry:
@@ -86,9 +89,11 @@ class ModelRegistry:
     def _download_from_gcs(self, settings: Settings) -> None:
         from f1_predictor.data.storage import download_blob
 
+        h_pkl = "Model_H_LightGBM_GOSS_Delta.pkl"
+        e_pkl = "Model_E_LightGBM_shallow.pkl"
         files = [
-            ("data/raw/model/Model_H_LightGBM_GOSS_Delta.pkl", settings.model_dir / "Model_H_LightGBM_GOSS_Delta.pkl"),
-            ("data/raw/model/Model_E_LightGBM_shallow.pkl", settings.model_dir / "Model_E_LightGBM_shallow.pkl"),
+            (f"data/raw/model/{h_pkl}", settings.model_dir / h_pkl),
+            (f"data/raw/model/{e_pkl}", settings.model_dir / e_pkl),
             ("data/raw/laps/all_laps.parquet", settings.data_dir / "raw/laps/all_laps.parquet"),
             ("data/raw/race/all_races.parquet", settings.data_dir / "raw/race/all_races.parquet"),
         ]

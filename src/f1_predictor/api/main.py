@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,11 +13,14 @@ from f1_predictor.api.config import Settings
 from f1_predictor.api.dependencies import registry
 from f1_predictor.api.routers import data, health, simulation
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = Settings()
     registry.load(settings)
     yield
@@ -24,7 +28,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="F1 Race Predictor",
-    description="Pre-race simulation using H+E ensemble (Model H trajectories + Model E final position refinement)",
+    description=(
+        "Pre-race simulation using H+E ensemble"
+        " (Model H trajectories + Model E final position refinement)"
+    ),
     version="0.1.0",
     lifespan=lifespan,
 )

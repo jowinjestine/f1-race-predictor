@@ -50,7 +50,7 @@ def build_field_median_curves(
     curves: dict[str, dict[int, float]] = {}
     for circuit, grp in df.groupby("circuit"):
         lap_medians = grp.groupby("lap_number")["lap_time_ratio"].median()
-        curves[str(circuit)] = {int(k): float(v) for k, v in lap_medians.items()}
+        curves[str(circuit)] = {int(k): float(v) for k, v in lap_medians.items()}  # type: ignore[call-overload]
 
     return curves
 

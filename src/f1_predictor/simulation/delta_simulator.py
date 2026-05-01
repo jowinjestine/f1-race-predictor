@@ -52,6 +52,7 @@ class DeltaRaceSimulator(RaceSimulator):
     ) -> None:
         super().__init__(model, circuit_defaults)
         self.field_medians = field_medians
+        self._last_pit_in: set[str] = set()
 
     def _get_baseline(self, circuit: str, lap: int) -> float:
         """Look up the historical median ratio for this circuit and lap."""
@@ -185,7 +186,7 @@ class DeltaRaceSimulator(RaceSimulator):
                 )
 
             # Handle pit stops
-            self._last_pit_in = pit_in_drivers  # type: ignore[attr-defined]
+            self._last_pit_in = pit_in_drivers
             for st in states:
                 if st.driver in pit_in_drivers:
                     st.pit_stop_count += 1

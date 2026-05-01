@@ -31,7 +31,7 @@ class QuantileMCResult:
     results: list[dict[str, Any]]
 
 
-class QuantileRaceSimulator(RaceSimulator):  # type: ignore[override]
+class QuantileRaceSimulator(RaceSimulator):
     """Monte Carlo simulator that samples from predicted quantiles.
 
     At each lap for each driver, draws a random quantile level
@@ -50,7 +50,7 @@ class QuantileRaceSimulator(RaceSimulator):  # type: ignore[override]
         self.n_simulations = n_simulations
         self.rng = np.random.RandomState(seed)
 
-    def simulate(
+    def simulate(  # type: ignore[override]
         self,
         circuit: str,
         drivers: list[dict[str, Any]],

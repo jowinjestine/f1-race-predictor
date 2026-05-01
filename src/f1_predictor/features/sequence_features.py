@@ -49,7 +49,7 @@ def build_sequence_training_data(
 
     X_list: list[NDArray[np.float64]] = []
     y_list: list[float] = []
-    id_rows: list[dict] = []
+    id_rows: list[dict[str, object]] = []
 
     for (_season, _round, _driver), grp in df.groupby(DRIVER_RACE_KEY):
         grp_filled = grp[feature_cols].ffill().fillna(_global_medians)

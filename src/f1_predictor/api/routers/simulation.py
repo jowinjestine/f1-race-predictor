@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException
 
 from f1_predictor.api.dependencies import registry
@@ -19,7 +21,7 @@ from f1_predictor.simulation.ensemble_simulator import EnsembleSimulator
 router = APIRouter(prefix="/api/v1", tags=["simulation"])
 
 
-def _to_driver_dicts(req: SimulationRequest) -> list[dict]:
+def _to_driver_dicts(req: SimulationRequest) -> list[dict[str, Any]]:
     return [
         {
             "driver": d.driver,
@@ -33,7 +35,7 @@ def _to_driver_dicts(req: SimulationRequest) -> list[dict]:
     ]
 
 
-def _to_strategies(req: SimulationRequest) -> dict | None:
+def _to_strategies(req: SimulationRequest) -> dict[str, list[tuple[str, int | None]]] | None:
     if not req.strategies:
         return None
     return {
@@ -54,9 +56,7 @@ def simulate(req: SimulationRequest) -> SimulationResponse:
     drivers = _to_driver_dicts(req)
     strategies = _to_strategies(req)
 
-    sim = EnsembleSimulator(
-        registry.h_simulator, registry.model_e, blend_laps=req.blend_laps
-    )
+    sim = EnsembleSimulator(registry.h_simulator, registry.model_e, blend_laps=req.blend_laps)
     result = sim.simulate(req.circuit, drivers, strategies)
 
     model_label = "H+E ensemble" if req.blend_laps > 0 else "H only"
@@ -76,9 +76,7 @@ def simulate(req: SimulationRequest) -> SimulationResponse:
         for rec in result.lap_records
     ]
 
-    final_standings = [
-        FinalStanding(**fr) for fr in result.final_results
-    ]
+    final_standings = [FinalStanding(**fr) for fr in result.final_results]
 
     return SimulationResponse(
         circuit=result.circuit,

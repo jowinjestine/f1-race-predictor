@@ -35,7 +35,7 @@ class EnsembleSimulator:
         strategies: dict[str, list[tuple[str, int | None]]] | None = None,
         qualifying_data: dict[str, dict[str, float]] | None = None,
     ) -> SimulationResult:
-        h_result = self.h_simulator.simulate(circuit, drivers, strategies)
+        h_result: SimulationResult = self.h_simulator.simulate(circuit, drivers, strategies)
 
         if qualifying_data is None:
             qualifying_data = self._build_qualifying_data(drivers)
@@ -47,9 +47,7 @@ class EnsembleSimulator:
 
         return self._blend_trajectories(h_result, e_predictions)
 
-    def _build_qualifying_data(
-        self, drivers: list[dict[str, Any]]
-    ) -> dict[str, dict[str, float]]:
+    def _build_qualifying_data(self, drivers: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
         pole_times = []
         for d in drivers:
             qs = [d.get(f"q{i}") for i in (1, 2, 3)]
@@ -122,15 +120,25 @@ class EnsembleSimulator:
         meta_df = self.compute_meta_features(h_result, qualifying_data)
 
         feature_cols = [
-            "A_last", "A_mean", "A_std", "A_min", "A_range", "A_last5",
-            "B_last", "B_mean", "B_std", "B_last5",
-            "C_pred", "grid_position", "quali_delta_to_pole",
+            "A_last",
+            "A_mean",
+            "A_std",
+            "A_min",
+            "A_range",
+            "A_last5",
+            "B_last",
+            "B_mean",
+            "B_std",
+            "B_last5",
+            "C_pred",
+            "grid_position",
+            "quali_delta_to_pole",
         ]
 
         e_preds = self.model_e.predict(meta_df[feature_cols])
         e_preds = np.clip(e_preds, 1.0, 20.0)
 
-        return dict(zip(meta_df["driver"], e_preds))
+        return dict(zip(meta_df["driver"], e_preds, strict=True))
 
     def _blend_trajectories(
         self,

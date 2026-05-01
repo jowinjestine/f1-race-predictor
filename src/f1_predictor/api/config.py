@@ -13,6 +13,6 @@ class Settings(BaseSettings):
     load_from_gcs: bool = False
     gcs_bucket: str = "f1-predictor-artifacts-jowin"
     port: int = 8080
-    default_blend_laps: int = 10
+    default_blend_laps: int = 0
 
     model_config = {"env_prefix": "F1_"}
