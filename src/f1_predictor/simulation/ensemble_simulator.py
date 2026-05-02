@@ -374,6 +374,8 @@ class EnsembleSimulator:
                         )
                     )
 
+        h_final_map = {fr["driver"]: fr for fr in h_result.final_results}
+
         final_results = []
         last_lap_recs = {r.driver: r for r in new_records if r.lap == total_laps}
         leader_time = min(r.cum_time for r in last_lap_recs.values()) if last_lap_recs else 0.0
@@ -386,8 +388,25 @@ class EnsembleSimulator:
                     "total_time": rec.cum_time,
                     "gap_to_leader": rec.cum_time - leader_time,
                     "pit_stops": rec.stint - 1,
+                    "status": "Finished",
+                    "laps_completed": total_laps,
                 }
             )
+
+        for d in drivers:
+            if d not in last_lap_recs:
+                h_fr = h_final_map.get(d, {})
+                final_results.append(
+                    {
+                        "driver": d,
+                        "position": len(final_results) + 1,
+                        "total_time": h_fr.get("total_time", 0.0),
+                        "gap_to_leader": 0.0,
+                        "pit_stops": h_fr.get("pit_stops", 0),
+                        "status": h_fr.get("status", "DNF"),
+                        "laps_completed": h_fr.get("laps_completed", 0),
+                    }
+                )
 
         return SimulationResult(
             circuit=h_result.circuit,
