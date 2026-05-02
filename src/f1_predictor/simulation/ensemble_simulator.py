@@ -133,15 +133,12 @@ class EnsembleSimulator:
         # lap_time_delta_race_median: expanding median baseline, shifted by 1 lap
         lap_medians = df.groupby("lap_number")["lap_time"].median()
         expanding_med = lap_medians.expanding().median().shift(1)
-        df["lap_time_delta_race_median"] = (
-            df["lap_time"] - df["lap_number"].map(expanding_med)
-        )
+        df["lap_time_delta_race_median"] = df["lap_time"] - df["lap_number"].map(expanding_med)
 
         # lap_time_rolling_3: shifted rolling mean (Model B)
         df = df.sort_values(["driver", "lap_number"])
-        df["lap_time_rolling_3"] = (
-            df.groupby("driver")["lap_time"]
-            .transform(lambda x: x.rolling(3, min_periods=1).mean().shift(1))
+        df["lap_time_rolling_3"] = df.groupby("driver")["lap_time"].transform(
+            lambda x: x.rolling(3, min_periods=1).mean().shift(1)
         )
 
         # degradation_rate: OLS slope of lap_time vs tire_life within stint

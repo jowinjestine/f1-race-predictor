@@ -224,8 +224,7 @@ def optimize_pit_strategy(req: OptimizeStrategyRequest) -> OptimizeStrategyRespo
     if req.target_driver not in driver_abbrevs:
         raise HTTPException(
             400,
-            f"Target driver '{req.target_driver}' not in grid. "
-            f"Available: {sorted(driver_abbrevs)}",
+            f"Target driver '{req.target_driver}' not in grid. Available: {sorted(driver_abbrevs)}",
         )
 
     drivers = [
