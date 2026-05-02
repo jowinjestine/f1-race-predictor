@@ -8,7 +8,7 @@ Predicts F1 race finishing positions through a pipeline of nine models that prog
 
 **Data sources:** [FastF1](https://docs.fastf1.dev/) (2018-2024 telemetry), [Jolpica API](https://github.com/jolpica/jolpica-f1) (2025 results), [Open-Meteo](https://open-meteo.com/) (weather)
 
-**Live API:** Deployed on Google Cloud Run at `f1-race-predictor-yqe7tpf66a-uc.a.run.app`
+**Live API:** Deployed on Google Cloud Run — requires GCP identity token for access.
 
 ## Architecture
 
@@ -27,8 +27,13 @@ Open-Meteo┘               │  Model C (pre-race)  ──┘   (stacking)  │
                           └────────────────┬────────────────────────┘
                                            │
                                            ▼
-                                    FastAPI on Cloud Run
-                                   POST /api/v1/simulate
+                              FastAPI on Cloud Run
+                           ┌────────────────────────┐
+                           │ POST /api/v1/simulate   │
+                           │ POST /simulate/monte-   │
+                           │      carlo              │
+                           │ POST /optimize-strategy │
+                           └────────────────────────┘
 ```
 
 ### Model Hierarchy
@@ -41,7 +46,25 @@ Open-Meteo┘               │  Model C (pre-race)  ──┘   (stacking)  │
 | Production simulators | H, I | Delta-baseline and quantile-based race simulation |
 | Serving ensemble | H+E | H's trajectories refined by E's final-position stacker |
 
-See [docs/models.md](docs/models.md) for detailed documentation on each model.
+### Key Features
+
+- **Lap-by-lap simulation** — full race telemetry with position, lap time, gap, tyre state at every lap
+- **Monte Carlo uncertainty** — position distributions with percentiles and confidence intervals
+- **DNF prediction** — per-driver retirement probability with per-lap hazard sampling
+- **Strategy optimization** — find optimal pit timing and compound selection for any driver
+- **Compound differentiation** — physics-informed tyre pace offsets and degradation rates
+- **Decorrelated ensemble** — Models A, B, and H feed independent signals to Model E
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Methodology](docs/methodology.md) | How the predictor works — delta decomposition, compound corrections, Monte Carlo, cross-validation, evaluation |
+| [Models](docs/models.md) | Detailed documentation of all nine models (A-I) — features, training, performance |
+| [API Reference](docs/api.md) | Complete endpoint documentation with request/response examples |
+| [Simulation Engine](docs/simulation.md) | Internals of the lap-by-lap simulator — DriverState, feature construction, blending, strategy optimization |
+| [Data Dictionary](docs/data_dictionary.md) | Field definitions for race-level and lap-level datasets |
+| [Deployment](docs/deployment.md) | Cloud Run setup, CI/CD pipeline, GPU training, container build |
 
 ## Tech Stack
 
@@ -56,7 +79,7 @@ See [docs/models.md](docs/models.md) for detailed documentation on each model.
 | CI/CD | GitHub Actions (lint, format, typecheck, test, deploy) |
 | GPU training | GCE VM with NVIDIA L4 (CUDA) |
 
-## Setup
+## Quick Start
 
 ### Prerequisites
 
@@ -86,32 +109,55 @@ uv sync --extra serve
 uv run uvicorn f1_predictor.api.main:app --reload
 ```
 
-Models are loaded from `data/raw/model/` by default. Set `F1_LOAD_FROM_GCS=true` and `F1_GCS_BUCKET=f1-predictor-artifacts-jowin` to download from GCS at startup.
+Models are loaded from `data/raw/model/` by default. Set `F1_LOAD_FROM_GCS=true` to download from GCS at startup.
 
 ## API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/v1/simulate` | Run H+E ensemble race simulation |
-| POST | `/api/v1/simulate/monte-carlo` | Monte Carlo simulation with position distributions |
+| POST | `/api/v1/simulate` | Run H+E ensemble race simulation with lap-by-lap telemetry |
+| POST | `/api/v1/simulate/monte-carlo` | Monte Carlo simulation with position distributions and DNF rates |
+| POST | `/api/v1/optimize-strategy` | Find optimal pit strategy for a target driver |
 | GET | `/api/v1/circuits` | List available circuits with default strategies |
-| GET | `/api/v1/drivers/{season}` | List drivers for a season |
+| GET | `/api/v1/drivers/{season}` | List drivers for a season (2018-2025) |
 | GET | `/api/v1/races/{season}` | List races for a season |
 | GET | `/api/health` | Liveness check |
 | GET | `/api/ready` | Readiness check (models loaded) |
 
-### Example Request
+See [API Reference](docs/api.md) for full request/response documentation.
+
+### Example: Race Simulation
 
 ```bash
 curl -X POST https://f1-race-predictor-yqe7tpf66a-uc.a.run.app/api/v1/simulate \
   -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   -H "Content-Type: application/json" \
   -d '{
-    "circuit": "Monza",
+    "circuit": "Monaco Grand Prix",
     "drivers": [
-      {"driver": "VER", "grid_position": 1, "q1": 80.5, "q2": 80.1, "q3": 79.8},
-      {"driver": "NOR", "grid_position": 2, "q1": 80.7, "q2": 80.3, "q3": 80.0}
-    ]
+      {"driver": "VER", "grid_position": 1, "q3": 70.2},
+      {"driver": "LEC", "grid_position": 2, "q3": 70.4, "dnf_probability": 0.15},
+      {"driver": "NOR", "grid_position": 3, "q3": 70.6}
+    ],
+    "blend_laps": 10
+  }'
+```
+
+### Example: Strategy Optimization
+
+```bash
+curl -X POST https://f1-race-predictor-yqe7tpf66a-uc.a.run.app/api/v1/optimize-strategy \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "circuit": "Monaco Grand Prix",
+    "drivers": [
+      {"driver": "VER", "grid_position": 1, "q3": 70.2},
+      {"driver": "LEC", "grid_position": 2, "q3": 70.4},
+      {"driver": "NOR", "grid_position": 3, "q3": 70.6}
+    ],
+    "target_driver": "NOR",
+    "use_monte_carlo": false
   }'
 ```
 
@@ -120,11 +166,37 @@ curl -X POST https://f1-race-predictor-yqe7tpf66a-uc.a.run.app/api/v1/simulate \
 ```
 f1-race-predictor/
 ├── src/f1_predictor/
-│   ├── api/               # FastAPI application (config, schemas, routers)
-│   ├── data/              # Data ingestion (FastF1, Jolpica, Open-Meteo, GCS)
-│   ├── features/          # Feature engineering (lap, race, simulation, delta, sequence)
-│   ├── models/            # Training utilities (GPU detection, DL architectures)
-│   ├── simulation/        # Race simulators (engine, delta, quantile, ensemble)
+│   ├── api/               # FastAPI application
+│   │   ├── main.py        # App setup, lifespan, CORS
+│   │   ├── config.py      # Settings (env vars with F1_ prefix)
+│   │   ├── schemas.py     # Pydantic request/response models
+│   │   ├── dependencies.py # Model registry, startup loading
+│   │   └── routers/       # health, simulation, data endpoints
+│   ├── data/              # Data ingestion
+│   │   ├── collect.py     # FastF1 race collection + weather
+│   │   ├── collect_laps.py # Lap-by-lap telemetry collection
+│   │   ├── jolpica.py     # Jolpica API client (2025 season)
+│   │   └── storage.py     # GCS upload/download helpers
+│   ├── features/          # Feature engineering
+│   │   ├── common.py      # Shared utilities (rolling means, one-hot)
+│   │   ├── lap_features.py # Lap-level features (Models A, B)
+│   │   ├── race_features.py # Pre-race features (Model C)
+│   │   ├── simulation_features.py # Simulation features (Model F)
+│   │   ├── delta_features.py # Delta-ratio features (Model H)
+│   │   ├── sequence_features.py # Windowed sequences (Model G)
+│   │   └── splits.py      # CV strategies (LeaveOneSeason, ExpandingWindow)
+│   ├── simulation/        # Race simulators
+│   │   ├── engine.py      # Base RaceSimulator, DriverState, LapRecord
+│   │   ├── delta_simulator.py # DeltaRaceSimulator (H), MonteCarloSimulator
+│   │   ├── ensemble_simulator.py # EnsembleSimulator (H+E), A/B integration
+│   │   ├── strategy.py    # Candidate generation, strategy optimization
+│   │   ├── defaults.py    # Circuit defaults, default strategy builder
+│   │   ├── quantile_simulator.py # QuantileRaceSimulator (I)
+│   │   └── sequence_simulator.py # SequenceRaceSimulator (G)
+│   ├── models/            # Training utilities
+│   │   ├── gpu.py         # GPU detection (CUDA / ROCm)
+│   │   ├── architectures.py # DL models (GRU, FT-Transformer, MLP)
+│   │   └── dl_utils.py    # Training loop, early stopping
 │   └── explain/           # SHAP explanations
 ├── notebooks/
 │   ├── 01-04_*.ipynb      # Data collection and EDA
@@ -132,36 +204,35 @@ f1-race-predictor/
 │   ├── 06-07_*.ipynb      # SHAP analysis and comparison
 │   ├── 08_*.ipynb         # Simulation comparison
 │   └── 09_*.ipynb         # Ensemble validation
-├── docs/
-│   ├── models.md          # Model documentation
-│   ├── data_dictionary.md # Field definitions
-│   └── GPU_DL_PLAN.md     # GPU training architecture
+├── docs/                  # Documentation (see table above)
 ├── scripts/               # GCE training scripts
 ├── tests/                 # Test suite
 ├── Dockerfile             # Production container
 └── pyproject.toml         # Project configuration
 ```
 
-## GPU Training
+## Performance
 
-```bash
-# Launch training on GCE VM with L4 GPU
-bash scripts/run_training_remote.sh
+### Simulation Accuracy (4 held-out 2024 races)
 
-# Download results
-bash scripts/fetch_training_results.sh
-```
+| Configuration | RMSE | Spearman |
+|---------------|------|----------|
+| Model H only (blend=0) | 3.46 | 0.82 |
+| Model E standalone | 2.60 | 0.93 |
+| H+E ensemble (blend=10) | 3.50 | 0.80 |
 
-All trained models are stored in `gs://f1-predictor-artifacts-jowin/data/raw/model/`.
+### Strategy Optimizer
+
+On a 78-lap Monaco simulation with 5 drivers:
+- 20 candidate strategies evaluated in <2 seconds
+- 30-second time spread across strategies with compound differentiation
+- Position differentiation (P3 vs P4) for suboptimal compound choices
 
 ## Deployment
 
-The API auto-deploys to Cloud Run on push to `main` (when `src/`, `Dockerfile`, `pyproject.toml`, or `uv.lock` change).
+Auto-deploys to Cloud Run on push to `main` when `src/`, `Dockerfile`, `pyproject.toml`, or `uv.lock` change.
 
-- **Image registry:** `us-docker.pkg.dev/jowin-personal-2026/f1-race-predictor/f1-race-predictor`
-- **Resources:** 2 CPU, 2 GiB RAM, 1-5 instances
-- **Auth:** Requires GCP identity token (not publicly accessible)
-- **CI/CD:** GitHub Actions with Workload Identity Federation (no long-lived keys)
+See [Deployment](docs/deployment.md) for full infrastructure details.
 
 ## Development
 
@@ -172,7 +243,7 @@ The API auto-deploys to Cloud Run on push to `main` (when `src/`, `Dockerfile`, 
 ### Branching
 
 - `main` is protected — all changes via squash-merge PRs
-- Feature branches: `feat/<short-name>`
+- Feature branches: `feat/<short-name>`, `fix/<short-name>`
 
 ## License
 
