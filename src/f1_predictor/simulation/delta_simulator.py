@@ -41,6 +41,25 @@ class NoisyModelWrapper:
         return preds + noise
 
 
+COMPOUND_PACE_OFFSET: dict[str, float] = {
+    "SOFT": -0.006,
+    "MEDIUM": 0.0,
+    "HARD": 0.004,
+    "INTERMEDIATE": 0.0,
+    "WET": 0.0,
+}
+
+COMPOUND_DEG_RATE: dict[str, float] = {
+    "SOFT": 0.0006,
+    "MEDIUM": 0.0003,
+    "HARD": 0.0001,
+    "INTERMEDIATE": 0.0002,
+    "WET": 0.0001,
+}
+
+DEG_ONSET_LAP = 5
+
+
 class DeltaRaceSimulator(RaceSimulator):
     """Simulator that predicts delta_ratio, adds back field_median baseline."""
 
@@ -163,6 +182,13 @@ class DeltaRaceSimulator(RaceSimulator):
             deltas = self.model.predict(features_df[SIMULATION_FEATURE_COLS])
             baseline = self._get_baseline(circuit, lap)
             ratios = deltas + baseline
+
+            # Compound pace + degradation correction (model has near-zero
+            # importance on dry compound one-hots)
+            for i, st in enumerate(active_states):
+                ratios[i] += COMPOUND_PACE_OFFSET.get(st.compound, 0.0)
+                wear_laps = max(0, st.tire_life - DEG_ONSET_LAP)
+                ratios[i] += COMPOUND_DEG_RATE.get(st.compound, 0.0) * wear_laps
 
             # Clamp
             for i, st in enumerate(active_states):
