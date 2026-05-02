@@ -69,12 +69,17 @@ class DeltaRaceSimulator(RaceSimulator):
         circuit: str,
         drivers: list[dict[str, Any]],
         strategies: dict[str, list[tuple[str, int | None]]] | None = None,
+        *,
+        dnf_probs: dict[str, float] | None = None,
+        rng: np.random.RandomState | None = None,
     ) -> SimulationResult:
         """Run simulation with delta prediction + baseline reconstruction.
 
-        The underlying model predicts delta_ratio. We add the field median
-        baseline to convert back to absolute lap_time_ratio before deriving
-        positions from cumulative times.
+        Args:
+            dnf_probs: Per-driver race-level DNF probability (0.0 to 1.0).
+                Converted to per-lap hazard rate internally.
+            rng: Random state for DNF sampling (deterministic if None and
+                no DNF probs provided).
         """
         from f1_predictor.features.race_features import HYBRID_CIRCUITS, STREET_CIRCUITS
         from f1_predictor.features.simulation_features import SIMULATION_FEATURE_COLS
@@ -91,7 +96,17 @@ class DeltaRaceSimulator(RaceSimulator):
         is_hybrid = circuit in HYBRID_CIRCUITS
         is_permanent = not is_street and not is_hybrid
 
-        # Initialize driver states (same as parent)
+        # Compute per-lap hazard rates from race-level DNF probabilities
+        hazard_rates: dict[str, float] = {}
+        if dnf_probs:
+            for drv_name, p in dnf_probs.items():
+                if p > 0:
+                    hazard_rates[drv_name] = 1.0 - (1.0 - p) ** (1.0 / total_laps)
+
+        if rng is None and hazard_rates:
+            rng = np.random.RandomState(42)
+
+        # Initialize driver states
         states: list[DriverState] = []
         for drv in sorted(drivers, key=lambda d: d["grid_position"]):
             q_times = [drv.get(f"q{i}") for i in (1, 2, 3)]
@@ -119,9 +134,13 @@ class DeltaRaceSimulator(RaceSimulator):
         lap_records: list[LapRecord] = []
 
         for lap in range(1, total_laps + 1):
+            active_states = [s for s in states if not s.is_retired]
+            if not active_states:
+                break
+
             pit_in_drivers = set()
             pit_out_drivers = set()
-            for st in states:
+            for st in active_states:
                 if st.current_stint_idx < len(st.strategy):
                     _, pit_lap = st.strategy[st.current_stint_idx]
                     if pit_lap is not None and lap == pit_lap:
@@ -132,7 +151,7 @@ class DeltaRaceSimulator(RaceSimulator):
             features_df = self._build_features(
                 lap,
                 total_laps,
-                states,
+                active_states,
                 is_street,
                 is_hybrid,
                 is_permanent,
@@ -146,7 +165,7 @@ class DeltaRaceSimulator(RaceSimulator):
             ratios = deltas + baseline
 
             # Clamp
-            for i, st in enumerate(states):
+            for i, st in enumerate(active_states):
                 if st.driver in pit_in_drivers:
                     ratios[i] = np.clip(ratios[i], 1.10, 1.50)
                 elif st.driver in pit_out_drivers:
@@ -155,7 +174,7 @@ class DeltaRaceSimulator(RaceSimulator):
                     ratios[i] = np.clip(ratios[i], 1.01, 1.15)
 
             # Update state
-            for i, st in enumerate(states):
+            for i, st in enumerate(active_states):
                 lt = float(ratios[i]) * st.best_quali_sec
                 st.cum_time += lt
                 st.lap_times.append(lt)
@@ -164,13 +183,13 @@ class DeltaRaceSimulator(RaceSimulator):
                 st.tire_life += 1
                 st.laps_since_last_pit += 1
 
-            # Rank by cumulative time
-            sorted_states = sorted(states, key=lambda s: s.cum_time)
-            leader_time = sorted_states[0].cum_time
-            for pos_idx, st in enumerate(sorted_states):
+            # Rank active drivers by cumulative time
+            sorted_active = sorted(active_states, key=lambda s: s.cum_time)
+            leader_time = sorted_active[0].cum_time
+            for pos_idx, st in enumerate(sorted_active):
                 st.position = pos_idx + 1
 
-            for st in states:
+            for st in active_states:
                 lap_records.append(
                     LapRecord(
                         lap=lap,
@@ -187,7 +206,7 @@ class DeltaRaceSimulator(RaceSimulator):
 
             # Handle pit stops
             self._last_pit_in = pit_in_drivers
-            for st in states:
+            for st in active_states:
                 if st.driver in pit_in_drivers:
                     st.pit_stop_count += 1
                     st.tire_life = 1
@@ -199,11 +218,24 @@ class DeltaRaceSimulator(RaceSimulator):
                     if st.current_stint_idx < len(st.strategy):
                         st.compound = st.strategy[st.current_stint_idx][0]
 
-        # Build final results
-        final_sorted = sorted(states, key=lambda s: s.cum_time)
-        leader_time = final_sorted[0].cum_time
+            # DNF sampling: retire drivers probabilistically after lap processing
+            if rng is not None and hazard_rates:
+                for st in active_states:
+                    h = hazard_rates.get(st.driver, 0.0)
+                    if h > 0 and rng.random() < h:
+                        st.is_retired = True
+                        st.retired_on_lap = lap
+                        st.retirement_status = "DNF"
+
+        # Build final results — finishers by cum_time, then DNFs by retirement lap
+        finishers = [s for s in states if not s.is_retired]
+        retired = [s for s in states if s.is_retired]
+        finishers.sort(key=lambda s: s.cum_time)
+        retired.sort(key=lambda s: -(s.retired_on_lap or 0))
+
         final_results = []
-        for pos_idx, st in enumerate(final_sorted):
+        leader_time = finishers[0].cum_time if finishers else 0.0
+        for pos_idx, st in enumerate(finishers + retired):
             final_results.append(
                 {
                     "driver": st.driver,
@@ -211,6 +243,8 @@ class DeltaRaceSimulator(RaceSimulator):
                     "total_time": st.cum_time,
                     "gap_to_leader": st.cum_time - leader_time,
                     "pit_stops": st.pit_stop_count,
+                    "status": st.retirement_status,
+                    "laps_completed": st.retired_on_lap or total_laps,
                 }
             )
 
@@ -242,19 +276,28 @@ class MonteCarloSimulator:
         circuit: str,
         drivers: list[dict[str, Any]],
         strategies: dict[str, list[tuple[str, int | None]]] | None = None,
+        *,
+        dnf_probs: dict[str, float] | None = None,
     ) -> MonteCarloResult:
         all_positions: dict[str, list[int]] = defaultdict(list)
+        all_statuses: dict[str, list[str]] = defaultdict(list)
 
         for _ in range(self.n_simulations):
             noisy_model = NoisyModelWrapper(self.base_simulator.model, self.noise_std, self.rng)
             sim = _copy_simulator_with_model(self.base_simulator, noisy_model)
-            result = sim.simulate(circuit, drivers, strategies)
+            mc_rng = np.random.RandomState(self.rng.randint(0, 2**31))
+            result = sim.simulate(
+                circuit, drivers, strategies, dnf_probs=dnf_probs, rng=mc_rng
+            )
             for fr in result.final_results:
                 all_positions[fr["driver"]].append(fr["position"])
+                all_statuses[fr["driver"]].append(fr.get("status", "Finished"))
 
         results = []
         for driver, positions in all_positions.items():
             arr = np.array(positions)
+            statuses = all_statuses[driver]
+            dnf_count = sum(1 for s in statuses if s == "DNF")
             results.append(
                 {
                     "driver": driver,
@@ -265,6 +308,7 @@ class MonteCarloSimulator:
                     "position_p75": int(np.percentile(arr, 75)),
                     "position_p90": int(np.percentile(arr, 90)),
                     "position_std": float(np.std(arr)),
+                    "dnf_rate": dnf_count / len(statuses),
                 }
             )
 

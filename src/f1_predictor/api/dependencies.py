@@ -48,6 +48,8 @@ class ModelRegistry:
         self.h_simulator: DeltaRaceSimulator | None = None
         self.ensemble_simulator: EnsembleSimulator | None = None
         self.model_e: Any = None
+        self.model_a: Any = None
+        self.model_b: Any = None
         self.circuit_defaults: dict[str, Any] = {}
         self.laps_df: pd.DataFrame | None = None
         self.races_df: pd.DataFrame | None = None
@@ -79,8 +81,17 @@ class ModelRegistry:
 
         logger.info("Loading Model E...")
         self.model_e = _load_pkl(model_dir / "Model_E_LightGBM_shallow.pkl")
+
+        logger.info("Loading Models A & B...")
+        self.model_a = _load_pkl(model_dir / "Model_A_LightGBM_GOSS.pkl")
+        self.model_b = _load_pkl(model_dir / "Model_B_LightGBM_GOSS.pkl")
+
         self.ensemble_simulator = EnsembleSimulator(
-            self.h_simulator, self.model_e, blend_laps=settings.default_blend_laps
+            self.h_simulator,
+            self.model_e,
+            model_a=self.model_a,
+            model_b=self.model_b,
+            blend_laps=settings.default_blend_laps,
         )
 
         self._ready = True
@@ -91,9 +102,13 @@ class ModelRegistry:
 
         h_pkl = "Model_H_LightGBM_GOSS_Delta.pkl"
         e_pkl = "Model_E_LightGBM_shallow.pkl"
+        a_pkl = "Model_A_LightGBM_GOSS.pkl"
+        b_pkl = "Model_B_LightGBM_GOSS.pkl"
         files = [
             (f"data/raw/model/{h_pkl}", settings.model_dir / h_pkl),
             (f"data/raw/model/{e_pkl}", settings.model_dir / e_pkl),
+            (f"data/raw/model/{a_pkl}", settings.model_dir / a_pkl),
+            (f"data/raw/model/{b_pkl}", settings.model_dir / b_pkl),
             ("data/raw/laps/all_laps.parquet", settings.data_dir / "raw/laps/all_laps.parquet"),
             ("data/raw/race/all_races.parquet", settings.data_dir / "raw/race/all_races.parquet"),
         ]
