@@ -286,9 +286,7 @@ class MonteCarloSimulator:
             noisy_model = NoisyModelWrapper(self.base_simulator.model, self.noise_std, self.rng)
             sim = _copy_simulator_with_model(self.base_simulator, noisy_model)
             mc_rng = np.random.RandomState(self.rng.randint(0, 2**31))
-            result = sim.simulate(
-                circuit, drivers, strategies, dnf_probs=dnf_probs, rng=mc_rng
-            )
+            result = sim.simulate(circuit, drivers, strategies, dnf_probs=dnf_probs, rng=mc_rng)
             for fr in result.final_results:
                 all_positions[fr["driver"]].append(fr["position"])
                 all_statuses[fr["driver"]].append(fr.get("status", "Finished"))
