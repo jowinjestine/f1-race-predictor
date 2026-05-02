@@ -35,6 +35,11 @@ class DriverState:
     strategy: list[tuple[str, int | None]] = field(default_factory=list)
     current_stint_idx: int = 0
 
+    # Retirement state
+    is_retired: bool = False
+    retired_on_lap: int | None = None
+    retirement_status: str = "Finished"
+
 
 @dataclass
 class LapRecord:
@@ -237,17 +242,24 @@ class RaceSimulator:
                     if s.current_stint_idx < len(s.strategy):
                         s.compound = s.strategy[s.current_stint_idx][0]
 
-        # Build final results
-        final_sorted = sorted(states, key=lambda x: x.cum_time)
+        # Build final results — finishers first (by cum_time), then DNFs (by retirement lap desc)
+        finishers = [s for s in states if not s.is_retired]
+        retired = [s for s in states if s.is_retired]
+        finishers.sort(key=lambda x: x.cum_time)
+        retired.sort(key=lambda x: -(x.retired_on_lap or 0))
+
         final_results = []
-        for pos, s in enumerate(final_sorted, 1):
+        leader_time = finishers[0].cum_time if finishers else 0.0
+        for pos, s in enumerate(finishers + retired, 1):
             final_results.append(
                 {
                     "driver": s.driver,
                     "position": pos,
                     "total_time": s.cum_time,
-                    "gap_to_leader": s.cum_time - final_sorted[0].cum_time,
+                    "gap_to_leader": s.cum_time - leader_time,
                     "pit_stops": s.pit_stop_count,
+                    "status": s.retirement_status,
+                    "laps_completed": s.retired_on_lap or total_laps,
                 }
             )
 

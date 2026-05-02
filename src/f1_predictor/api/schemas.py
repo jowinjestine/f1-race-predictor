@@ -40,6 +40,15 @@ class DriverInput(BaseModel):
         default="MEDIUM",
         description="Starting tyre compound: SOFT, MEDIUM, HARD, INTERMEDIATE, or WET",
     )
+    dnf_probability: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Probability of this driver retiring from the race (0.0 to 1.0)."
+            " Converted to a per-lap hazard rate. Set to 0 to disable."
+        ),
+    )
 
 
 class StrategyLeg(BaseModel):
@@ -146,6 +155,14 @@ class FinalStanding(BaseModel):
         description="Time gap to the winner in seconds (0.0 for P1)",
     )
     pit_stops: int = Field(description="Total number of pit stops made")
+    status: str = Field(
+        default="Finished",
+        description="'Finished' or 'DNF'",
+    )
+    laps_completed: int = Field(
+        default=0,
+        description="Number of laps completed (equals total_laps if finished)",
+    )
 
 
 class MonteCarloStanding(BaseModel):
@@ -166,6 +183,10 @@ class MonteCarloStanding(BaseModel):
     )
     position_std: float = Field(
         description="Std dev of positions (lower = more predictable)",
+    )
+    dnf_rate: float = Field(
+        default=0.0,
+        description="Fraction of simulations where the driver retired (DNF)",
     )
 
 
@@ -232,3 +253,72 @@ class DriverInfo(BaseModel):
         description="Three-letter abbreviation (e.g. VER, NOR)",
     )
     team: str | None = Field(default=None, description="Constructor/team name (if available)")
+
+
+# --- Strategy optimization ---
+
+
+class OptimizeStrategyRequest(BaseModel):
+    """Request body for pit strategy optimization."""
+
+    circuit: str = Field(description="Circuit name (same as simulation requests)")
+    drivers: list[DriverInput] = Field(
+        min_length=2,
+        max_length=20,
+        description="Starting grid with qualifying data",
+    )
+    target_driver: str = Field(
+        description="Driver abbreviation to optimize strategy for (e.g. 'VER')",
+    )
+    use_monte_carlo: bool = Field(
+        default=False,
+        description="Run Monte Carlo on top 5 strategies for confidence intervals",
+    )
+    n_simulations: int = Field(
+        default=50,
+        ge=10,
+        le=200,
+        description="Number of Monte Carlo simulations per strategy (if enabled)",
+    )
+    max_candidates: int = Field(
+        default=30,
+        ge=5,
+        le=100,
+        description="Maximum number of candidate strategies to evaluate",
+    )
+    pit_lap_delta: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        description="Pit lap variation range (+/- laps from circuit default windows)",
+    )
+
+
+class StrategyOption(BaseModel):
+    """One evaluated strategy option."""
+
+    rank: int = Field(description="Rank (1 = best)")
+    strategy: list[StrategyLeg] = Field(description="The pit strategy")
+    description: str = Field(description="Human-readable strategy description")
+    predicted_position: int = Field(description="Predicted finishing position")
+    predicted_time: float = Field(description="Predicted total race time in seconds")
+    gap_to_leader: float = Field(description="Predicted gap to race leader")
+    position_mean: float | None = Field(
+        default=None,
+        description="Mean position from Monte Carlo (if run)",
+    )
+    position_std: float | None = Field(
+        default=None,
+        description="Position std dev from Monte Carlo (if run)",
+    )
+
+
+class OptimizeStrategyResponse(BaseModel):
+    """Ranked strategy options for the target driver."""
+
+    circuit: str = Field(description="Circuit name")
+    target_driver: str = Field(description="Driver being optimized")
+    n_candidates_tested: int = Field(description="Total candidates evaluated")
+    strategies: list[StrategyOption] = Field(
+        description="Strategies ranked by predicted performance",
+    )
