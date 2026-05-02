@@ -294,24 +294,45 @@ The production serving ensemble combines Model H's lap-by-lap simulation with Mo
 ### Architecture
 
 1. Run Model H's `DeltaRaceSimulator` for a full race
-2. Compute Model E's 13 meta-features from H's simulated positions (H's positions proxy A/B's lap-level predictions)
-3. Predict final positions with Model E's LightGBM meta-learner
-4. Optionally blend H's trajectory toward E's predictions over the last N laps
+2. Reconstruct Model A and B input features from H's simulated lap data
+3. Run Models A (9 features) and B (8 features) independently to get per-lap position predictions
+4. Aggregate A/B predictions into 10 meta-features per driver (last, mean, std, min, range, last5)
+5. Combine with `C_pred` (H's final position), `grid_position`, `quali_delta_to_pole` → 13 features
+6. Model E predicts final positions from these decorrelated inputs
+7. Optionally blend H's trajectory toward E's predictions over the last N laps
 
-### A/B Proxy Collapse
+### Decorrelated Meta-Features
 
-In the current implementation, H produces a single position per driver per lap. When constructing E's meta-features, all A-derived and B-derived features come from the same source:
-- `A_last = B_last = C_pred` (all equal H's final simulated position)
-- `A_mean = B_mean`, `A_std = B_std`, etc.
+Models A and B use different feature subsets — A includes tyre-specific features (degradation_rate, compound_pace_delta) while B uses temporal features (laps_since_last_pit, lap_time_rolling_3). This gives Model E three independent signals:
 
-This reduces E's 13 features to 9 unique values, limiting its discriminative power. As a result, `blend_laps` defaults to 0 (H-only), with E available as an optional refinement.
+| Source | Features | What it captures |
+|--------|----------|-----------------|
+| Model A | A_last, A_mean, A_std, A_min, A_range, A_last5 | Tyre-aware position trajectory |
+| Model B | B_last, B_mean, B_std, B_last5 | Pace-based position trajectory |
+| Model H | C_pred | Simulation-based final position |
+
+**Fallback:** If Models A/B are not loaded, H's positions proxy all three signals (A_last = B_last = C_pred). This fallback is backward-compatible but limits E's discriminative power.
+
+### Compound Pace Corrections
+
+Model H's LightGBM assigns near-zero importance to dry compound one-hots (SOFT=2 splits, MEDIUM=2, HARD=8). The simulator applies physics-informed corrections:
+
+| Compound | Pace Offset | Degradation Rate (per lap after lap 5) |
+|----------|------------|---------------------------------------|
+| SOFT | -0.006 (faster) | 0.0006 (high wear) |
+| MEDIUM | 0.000 (baseline) | 0.0003 (medium wear) |
+| HARD | +0.004 (slower) | 0.0001 (low wear) |
+
+### DNF/Retirement Prediction
+
+Drivers can retire mid-race based on a per-driver DNF probability. The race-level probability is converted to a per-lap hazard rate: `h = 1 - (1-p)^(1/N)`. At each lap, active drivers are sampled for retirement. DNF'd drivers are excluded from subsequent simulation and appear at the end of final results.
 
 ### Validation Results (4 held-out 2024 races)
 
 | Configuration | RMSE | Spearman |
 |---------------|------|----------|
-| H only (blend=0) | 3.51 | 0.80 |
-| H+E (blend=5) | 3.50 | 0.80 |
+| H only (blend=0) | 3.46 | 0.82 |
+| E standalone | 2.60 | 0.93 |
 | H+E (blend=10) | 3.50 | 0.80 |
 
 ---
