@@ -107,6 +107,9 @@ class RaceSimulator:
         circuit: str,
         drivers: list[dict[str, Any]],
         strategies: dict[str, list[tuple[str, int | None]]] | None = None,
+        *,
+        dnf_probs: dict[str, float] | None = None,
+        rng: np.random.RandomState | None = None,
     ) -> SimulationResult:
         """Run a full race simulation.
 
@@ -117,6 +120,8 @@ class RaceSimulator:
             strategies: Optional dict mapping driver -> pit strategy.
                 Each strategy is a list of (compound, pit_on_lap) tuples.
                 If not provided, uses circuit-default strategy.
+            dnf_probs: Optional per-driver DNF probabilities.
+            rng: Optional random state for reproducible retirements.
 
         Returns:
             SimulationResult with lap-by-lap records and final standings.

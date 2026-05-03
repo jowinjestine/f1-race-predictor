@@ -42,6 +42,9 @@ class SequenceRaceSimulator(RaceSimulator):
         circuit: str,
         drivers: list[dict[str, Any]],
         strategies: (dict[str, list[tuple[str, int | None]]] | None) = None,
+        *,
+        dnf_probs: dict[str, float] | None = None,
+        rng: np.random.RandomState | None = None,
     ) -> SimulationResult:
         from f1_predictor.features.race_features import (
             HYBRID_CIRCUITS,
