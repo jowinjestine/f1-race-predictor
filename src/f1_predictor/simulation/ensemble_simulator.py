@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from f1_predictor.simulation.engine import LapRecord, SimulationResult
+from f1_predictor.simulation.engine import SimulationResult
 
 MODEL_A_FEATURES = [
     "gap_to_leader",
@@ -319,95 +319,51 @@ class EnsembleSimulator:
         h_result: SimulationResult,
         e_predictions: dict[str, float],
     ) -> SimulationResult:
-        """Blend H's lap-by-lap positions toward E's final predictions."""
+        """Re-rank final standings using E's predictions; keep H's telemetry.
+
+        H provides realistic lap-by-lap telemetry (times, gaps, tyre state).
+        E provides more accurate final position predictions (RMSE 2.60 vs 3.46).
+        We keep H's lap records unchanged and use E to determine the finishing order.
+        """
         total_laps = h_result.total_laps
-        blend_start = max(1, total_laps - self.blend_laps)
-
-        old_by_lap: dict[int, dict[str, LapRecord]] = {}
-        for rec in h_result.lap_records:
-            old_by_lap.setdefault(rec.lap, {})[rec.driver] = rec
-
-        drivers = sorted({rec.driver for rec in h_result.lap_records})
-
-        h_positions: dict[str, dict[int, int]] = {}
-        for d in drivers:
-            h_positions[d] = {}
-        for rec in h_result.lap_records:
-            h_positions[rec.driver][rec.lap] = rec.position
-
-        new_records: list[LapRecord] = []
-
-        for lap in range(1, total_laps + 1):
-            lap_recs = old_by_lap.get(lap, {})
-            if lap <= blend_start:
-                new_records.extend(lap_recs.values())
-            else:
-                alpha = (lap - blend_start) / self.blend_laps
-
-                blended_scores = {}
-                for d in drivers:
-                    h_pos = h_positions[d].get(lap, 20)
-                    e_pos = e_predictions.get(d, h_pos)
-                    blended_scores[d] = (1 - alpha) * h_pos + alpha * e_pos
-
-                ranked = sorted(blended_scores, key=lambda d: blended_scores[d])
-                rank_map = {d: i + 1 for i, d in enumerate(ranked)}
-
-                for d in drivers:
-                    old_rec = lap_recs.get(d)
-                    if old_rec is None:
-                        continue
-                    new_records.append(
-                        LapRecord(
-                            lap=old_rec.lap,
-                            driver=old_rec.driver,
-                            position=rank_map[d],
-                            lap_time=old_rec.lap_time,
-                            cum_time=old_rec.cum_time,
-                            gap_to_leader=old_rec.gap_to_leader,
-                            compound=old_rec.compound,
-                            tire_life=old_rec.tire_life,
-                            stint=old_rec.stint,
-                        )
-                    )
-
         h_final_map = {fr["driver"]: fr for fr in h_result.final_results}
 
+        finishers = [
+            fr["driver"]
+            for fr in h_result.final_results
+            if fr.get("status", "Finished") == "Finished"
+        ]
+        dnfs = [fr for fr in h_result.final_results if fr.get("status", "Finished") != "Finished"]
+
+        ranked = sorted(finishers, key=lambda d: e_predictions.get(d, 20.0))
+
         final_results = []
-        last_lap_recs = {r.driver: r for r in new_records if r.lap == total_laps}
-        leader_time = min(r.cum_time for r in last_lap_recs.values()) if last_lap_recs else 0.0
-        for d in sorted(last_lap_recs, key=lambda x: last_lap_recs[x].position):
-            rec = last_lap_recs[d]
+        leader_time = min(h_final_map[d]["total_time"] for d in finishers) if finishers else 0.0
+        for pos, d in enumerate(ranked, 1):
+            h_fr = h_final_map[d]
             final_results.append(
                 {
                     "driver": d,
-                    "position": rec.position,
-                    "total_time": rec.cum_time,
-                    "gap_to_leader": rec.cum_time - leader_time,
-                    "pit_stops": rec.stint - 1,
+                    "position": pos,
+                    "total_time": h_fr["total_time"],
+                    "gap_to_leader": h_fr["total_time"] - leader_time,
+                    "pit_stops": h_fr.get("pit_stops", 0),
                     "status": "Finished",
-                    "laps_completed": total_laps,
+                    "laps_completed": h_fr.get("laps_completed", total_laps),
                 }
             )
 
-        for d in drivers:
-            if d not in last_lap_recs:
-                h_fr = h_final_map.get(d, {})
-                final_results.append(
-                    {
-                        "driver": d,
-                        "position": len(final_results) + 1,
-                        "total_time": h_fr.get("total_time", 0.0),
-                        "gap_to_leader": 0.0,
-                        "pit_stops": h_fr.get("pit_stops", 0),
-                        "status": h_fr.get("status", "DNF"),
-                        "laps_completed": h_fr.get("laps_completed", 0),
-                    }
-                )
+        for dnf_fr in dnfs:
+            final_results.append(
+                {
+                    **dnf_fr,
+                    "position": len(final_results) + 1,
+                }
+            )
 
         return SimulationResult(
             circuit=h_result.circuit,
             total_laps=total_laps,
-            lap_records=new_records,
+            lap_records=list(h_result.lap_records),
             final_results=final_results,
         )
