@@ -49,11 +49,11 @@ jobs:
           region: ${{ env.REGION }}
           image: ${{ env.IMAGE }}:${{ github.sha }}
           flags: >-
-            --cpu=2
-            --memory=2Gi
-            --min-instances=1
+            --cpu=1
+            --memory=1Gi
+            --min-instances=0
             --max-instances=5
-            --concurrency=10
+            --concurrency=80
             --timeout=300
             --cpu-boost
             --set-env-vars=F1_LOAD_FROM_GCS=true,F1_GCS_BUCKET=f1-predictor-artifacts-jowin
